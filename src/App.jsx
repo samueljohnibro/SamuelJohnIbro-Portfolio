@@ -261,6 +261,238 @@ function ProjectPreviewModal({ project, onClose }) {
   return createPortal(modalContent, document.body)
 }
 
+const PROJECTS_MOBILE_QUERY = '(max-width: 900px)'
+const PROJECTS_COLUMN_TIE_TOLERANCE_PX = 1
+
+/* =========================================================
+   Projects Grid (Compact Masonry Layout)
+   ========================================================= */
+
+function ProjectsGrid({ projects, isPreviewModalOpen, onOpenPreview }) {
+  const gridRef = useRef(null)
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return undefined
+
+    const mediaQuery = window.matchMedia(PROJECTS_MOBILE_QUERY)
+    let frameId = null
+    let isDisposed = false
+
+    const resetMasonryStyles = (cards) => {
+      grid.classList.remove('is-masonry')
+      grid.style.removeProperty('height')
+
+      cards.forEach((card) => {
+        card.style.removeProperty('width')
+        card.style.removeProperty('left')
+        card.style.removeProperty('top')
+      })
+    }
+
+    const updateLayout = () => {
+      if (isDisposed) return
+
+      const cards = Array.from(grid.querySelectorAll(':scope > .project-card'))
+      if (cards.length === 0) return
+
+      if (mediaQuery.matches) {
+        resetMasonryStyles(cards)
+        return
+      }
+
+      const computed = window.getComputedStyle(grid)
+      const gap =
+        Number.parseFloat(computed.getPropertyValue('--projects-gap')) ||
+        Number.parseFloat(computed.columnGap) ||
+        18
+      const gridWidth = grid.getBoundingClientRect().width
+
+      if (gridWidth <= 0) return
+
+      const columnCount = 2
+      const columnWidth = (gridWidth - gap * (columnCount - 1)) / columnCount
+      const nextWidth = `${columnWidth}px`
+
+      grid.classList.add('is-masonry')
+
+      // Match column width before measuring heights so text wrapping stays exact.
+      cards.forEach((card) => {
+        if (card.style.width !== nextWidth) {
+          card.style.width = nextWidth
+        }
+      })
+
+      const heights = cards.map((card) => card.getBoundingClientRect().height)
+      const columnHeights = Array(columnCount).fill(0)
+
+      cards.forEach((card, index) => {
+        let targetColumn = 0
+        for (let col = 1; col < columnCount; col += 1) {
+          if (
+            columnHeights[col] <
+            columnHeights[targetColumn] - PROJECTS_COLUMN_TIE_TOLERANCE_PX
+          ) {
+            targetColumn = col
+          }
+        }
+
+        const nextLeft = `${targetColumn * (columnWidth + gap)}px`
+        const y = columnHeights[targetColumn]
+        const nextTop = `${y}px`
+
+        if (card.style.left !== nextLeft) {
+          card.style.left = nextLeft
+        }
+        if (card.style.top !== nextTop) {
+          card.style.top = nextTop
+        }
+
+        columnHeights[targetColumn] = y + heights[index] + gap
+      })
+
+      const maxHeight = Math.max(
+        0,
+        ...columnHeights.map((colHeight) => (colHeight > 0 ? colHeight - gap : 0))
+      )
+      const nextHeight = `${Math.ceil(maxHeight)}px`
+      if (grid.style.height !== nextHeight) {
+        grid.style.height = nextHeight
+      }
+    }
+
+    const scheduleLayout = () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId)
+      }
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null
+        updateLayout()
+      })
+    }
+
+    updateLayout()
+
+    let resizeObserver = null
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(scheduleLayout)
+      resizeObserver.observe(grid)
+      Array.from(grid.querySelectorAll(':scope > .project-card')).forEach(
+        (card) => {
+          resizeObserver.observe(card)
+        }
+      )
+    }
+
+    const handleMediaChange = () => {
+      updateLayout()
+    }
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleMediaChange)
+    } else {
+      mediaQuery.addListener(handleMediaChange)
+    }
+
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        if (!isDisposed) {
+          updateLayout()
+        }
+      })
+    }
+
+    return () => {
+      isDisposed = true
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId)
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect()
+      }
+      if (typeof mediaQuery.removeEventListener === 'function') {
+        mediaQuery.removeEventListener('change', handleMediaChange)
+      } else {
+        mediaQuery.removeListener(handleMediaChange)
+      }
+    }
+  }, [projects])
+
+  return (
+    <div ref={gridRef} className="projects-grid">
+      {projects.map((project) => {
+        const liveUrl = project.liveUrl || project.url || null
+        const isLive = Boolean(project.isLive ?? liveUrl)
+
+        return (
+          <article key={project.id} className="project-card">
+            <div className="project-top">
+              <p className="project-number">{project.number}</p>
+
+              <span
+                className={`project-status${isLive ? ' status-live' : ''}`}
+              >
+                {project.status}
+              </span>
+            </div>
+
+            {project.logo && (
+              <div className="project-logo">
+                <img src={project.logo.src} alt={project.logo.alt} />
+              </div>
+            )}
+
+            <h3>{project.title}</h3>
+
+            {liveUrl && (
+              <ProjectSitePreview
+                title={project.title}
+                url={liveUrl}
+                isPaused={isPreviewModalOpen}
+                onExpand={(triggerEl) =>
+                  onOpenPreview({ ...project, liveUrl, isLive }, triggerEl)
+                }
+              />
+            )}
+
+            <p>{project.description}</p>
+
+            <div className="project-tags">
+              {project.tags.map((tag) => (
+                <span key={tag}>{tag}</span>
+              ))}
+            </div>
+
+            {liveUrl ? (
+              <a
+                href={liveUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="fixroom-live-link"
+                aria-label={
+                  project.liveAriaLabel || `Open ${project.title} live project`
+                }
+              >
+                <span>{project.liveLabel || 'VIEW LIVE PROJECT'}</span>
+
+                <span className="fixroom-live-arrow" aria-hidden="true">
+                  ↗
+                </span>
+              </a>
+            ) : (
+              project.developmentNote && (
+                <p className="project-development-note">
+                  {project.developmentNote}
+                </p>
+              )
+            )}
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
 const trainingMedia = [
   {
     id: 'training-img-1',
@@ -2834,97 +3066,11 @@ Hero text rendering
       Selected work.
     </h2>
 
-    <div className="projects-grid">
-      {PROJECTS.map((project) => {
-        const liveUrl = project.liveUrl || project.url || null
-        const isLive = Boolean(project.isLive ?? liveUrl)
-
-        return (
-          <article key={project.id} className="project-card">
-            <div className="project-top">
-              <p className="project-number">
-                {project.number}
-              </p>
-
-              <span
-                className={`project-status${isLive ? ' status-live' : ''}`}
-              >
-                {project.status}
-              </span>
-            </div>
-
-            {project.logo && (
-              <div className="project-logo">
-                <img
-                  src={project.logo.src}
-                  alt={project.logo.alt}
-                />
-              </div>
-            )}
-
-            <h3>
-              {project.title}
-            </h3>
-
-            {liveUrl && (
-              <ProjectSitePreview
-                title={project.title}
-                url={liveUrl}
-                isPaused={Boolean(expandedProject)}
-                onExpand={(triggerEl) =>
-                  handleOpenPreview(
-                    { ...project, liveUrl, isLive },
-                    triggerEl
-                  )
-                }
-              />
-            )}
-
-            <p>
-              {project.description}
-            </p>
-
-            <div className="project-tags">
-              {project.tags.map((tag) => (
-                <span key={tag}>
-                  {tag}
-                </span>
-              ))}
-            </div>
-
-            {liveUrl ? (
-              <a
-                href={liveUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="fixroom-live-link"
-                aria-label={
-                  project.liveAriaLabel ||
-                  `Open ${project.title} live project`
-                }
-              >
-                <span>
-                  {project.liveLabel || 'VIEW LIVE PROJECT'}
-                </span>
-
-                <span
-                  className="fixroom-live-arrow"
-                  aria-hidden="true"
-                >
-                  ↗
-                </span>
-              </a>
-            ) : (
-              project.developmentNote && (
-                <p className="project-development-note">
-                  {project.developmentNote}
-                </p>
-              )
-            )}
-          </article>
-        )
-      })}
-    </div>
+    <ProjectsGrid
+      projects={PROJECTS}
+      isPreviewModalOpen={Boolean(expandedProject)}
+      onOpenPreview={handleOpenPreview}
+    />
   </section>
 
   {/* =========================
