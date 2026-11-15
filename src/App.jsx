@@ -68,6 +68,23 @@ const PROJECTS = [
   },
 ]
 
+// Status decides position: live projects come first, in-development ones
+// follow. The sort is stable, so entries keep their authored order within
+// each status group, and the displayed numbers always follow the final order.
+const isProjectLive = (project) =>
+  Boolean(project.isLive ?? (project.liveUrl || project.url))
+
+const SORTED_PROJECTS = PROJECTS.map((project, index) => ({ project, index }))
+  .sort(
+    (a, b) =>
+      Number(!isProjectLive(a.project)) - Number(!isProjectLive(b.project)) ||
+      a.index - b.index
+  )
+  .map(({ project }, position) => ({
+    ...project,
+    number: String(position + 1).padStart(2, '0'),
+  }))
+
 function getPreviewHostname(url) {
   try {
     return new URL(url).hostname
@@ -899,6 +916,17 @@ const HERO_TEXT =
 const HERO_ACCENT_START =
   'I build software that '.length
 const TYPEWRITER_SPEED = 55
+/*
+ * Compact viewports (phones/small tablets) skip the typewriter so the
+ * headline is never partially hidden while it types.
+ */
+function isCompactViewport() {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(max-width: 900px), (pointer: coarse)').matches
+  )
+}
 /*
 =========================
 Portfolio typography
@@ -2611,7 +2639,9 @@ Hero typewriter state
 =========================
    */
   const [typedHeroText, setTypedHeroText] = useState(() =>
-    typeof window !== 'undefined' && !('IntersectionObserver' in window)
+    typeof window === 'undefined' ||
+    !('IntersectionObserver' in window) ||
+    isCompactViewport()
       ? HERO_TEXT
       : ''
   )
@@ -2723,8 +2753,11 @@ blinking behavior reliable after typing finishes.
 
     if (
       typeof window === 'undefined' ||
-      !('IntersectionObserver' in window)
+      !('IntersectionObserver' in window) ||
+      isCompactViewport()
     ) {
+      // Phones/tablets (and browsers without IntersectionObserver) always
+      // show the complete headline immediately, with no typing animation.
       return undefined
     }
 
@@ -2806,6 +2839,12 @@ Hero text rendering
     typedHeroText.slice(
       HERO_ACCENT_START
     )
+  // Not-yet-typed characters stay in the layout (transparent) so the
+  // headline reserves its final size and never reflows or jumps.
+  const heroPendingText =
+    HERO_TEXT.slice(
+      typedHeroText.length
+    )
   return (
     <main
       className="portfolio-app"
@@ -2855,6 +2894,14 @@ Hero text rendering
           0 0 64px rgba(99, 102, 241, 0.18);
       }
 
+      .portfolio-app .hero-pending-text {
+        color: transparent !important;
+        text-shadow: none !important;
+        -webkit-text-fill-color: transparent;
+        user-select: none;
+        pointer-events: none;
+      }
+
       /*
        * =================================================
        * HERO CURSOR
@@ -2874,6 +2921,7 @@ Hero text rendering
         height: 0.86em;
 
         margin-left: 0.09em;
+        margin-right: -0.145em;
 
         vertical-align: -0.05em;
 
@@ -3746,6 +3794,10 @@ Hero text rendering
           className="hero-cursor"
           aria-hidden="true"
         />
+
+        <span className="hero-pending-text">
+          {heroPendingText}
+        </span>
       </span>
     </h1>
 
@@ -3857,7 +3909,7 @@ Hero text rendering
     </h2>
 
     <ProjectsGrid
-      projects={PROJECTS}
+      projects={SORTED_PROJECTS}
       isPreviewModalOpen={Boolean(expandedProject)}
       onOpenPreview={handleOpenPreview}
     />
