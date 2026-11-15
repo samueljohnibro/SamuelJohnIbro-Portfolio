@@ -1882,6 +1882,390 @@ function TrainingCarousel() {
   )
 }
 
+/* =========================================================
+   Deep-Space Starfield, Nebula & Shooting Stars Canvas
+   ========================================================= */
+
+function SpaceBackground() {
+  const canvasRef = useRef(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return undefined
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return undefined
+
+    const reducedMotionQuery = window.matchMedia(
+      '(prefers-reduced-motion: reduce)'
+    )
+    let prefersReducedMotion = reducedMotionQuery.matches
+    let animationFrameId = null
+    let width = 0
+    let height = 0
+    let dpr = 1
+
+    const pointer = {
+      x: -9999,
+      y: -9999,
+      targetX: -9999,
+      targetY: -9999,
+      active: false,
+    }
+
+    let scrollY = window.scrollY || 0
+
+    const starPalette = [
+      { r: 248, g: 250, b: 252 }, // pure starlight white
+      { r: 226, g: 232, b: 240 }, // cool white
+      { r: 103, g: 232, b: 249 }, // chomka cyan
+      { r: 147, g: 197, b: 253 }, // rigel blue
+      { r: 196, g: 181, b: 253 }, // nebula violet
+      { r: 254, g: 243, b: 199 }, // warm stellar gold
+    ]
+
+    let stars = []
+    let shootingStars = []
+    let nextShootingStarAt = performance.now() + 2600
+
+    const buildStars = () => {
+      const area = width * height
+      const count = Math.min(210, Math.max(95, Math.round(area / 7600)))
+      const nextStars = []
+
+      for (let i = 0; i < count; i += 1) {
+        const tierRoll = Math.random()
+        const tier = tierRoll < 0.62 ? 0 : tierRoll < 0.91 ? 1 : 2
+        const colorPick =
+          tier === 0
+            ? starPalette[Math.random() < 0.78 ? 0 : 2]
+            : starPalette[Math.floor(Math.random() * starPalette.length)]
+
+        const radius =
+          tier === 0
+            ? 0.45 + Math.random() * 0.65
+            : tier === 1
+              ? 0.95 + Math.random() * 0.8
+              : 1.65 + Math.random() * 0.95
+
+        const baseAlpha =
+          tier === 0
+            ? 0.24 + Math.random() * 0.36
+            : tier === 1
+              ? 0.46 + Math.random() * 0.4
+              : 0.74 + Math.random() * 0.24
+
+        nextStars.push({
+          x: Math.random() * width,
+          y: Math.random() * height,
+          radius,
+          baseAlpha,
+          tier,
+          color: colorPick,
+          twinkleSpeed: 0.0007 + Math.random() * 0.0018,
+          twinklePhase: Math.random() * Math.PI * 2,
+          driftX:
+            (Math.random() - 0.5) *
+            (tier === 0 ? 0.025 : tier === 1 ? 0.055 : 0.095),
+          driftY:
+            (Math.random() - 0.5) *
+            (tier === 0 ? 0.02 : tier === 1 ? 0.045 : 0.075),
+          parallax: tier === 0 ? 0.028 : tier === 1 ? 0.072 : 0.135,
+          hasSpikes: tier === 2 && Math.random() < 0.55,
+        })
+      }
+
+      stars = nextStars
+    }
+
+    const resizeCanvas = () => {
+      width = window.innerWidth
+      height = window.innerHeight
+      dpr = Math.min(window.devicePixelRatio || 1, 2)
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(height * dpr)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      buildStars()
+    }
+
+    const spawnShootingStar = (now) => {
+      const startX = Math.random() * width * 0.85
+      const startY = Math.random() * height * 0.42
+      const angle = (Math.PI / 180) * (22 + Math.random() * 24)
+      const speed = 11 + Math.random() * 7
+      const length = 95 + Math.random() * 75
+
+      shootingStars.push({
+        x: startX,
+        y: startY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        length,
+        life: 0,
+        maxLife: 34 + Math.floor(Math.random() * 20),
+        bornAt: now,
+      })
+    }
+
+    const drawScene = (now) => {
+      ctx.clearRect(0, 0, width, height)
+
+      if (!prefersReducedMotion) {
+        if (pointer.active) {
+          pointer.x += (pointer.targetX - pointer.x) * 0.08
+          pointer.y += (pointer.targetY - pointer.y) * 0.08
+        }
+      }
+
+      const centerOffsetX = pointer.active
+        ? (pointer.x - width * 0.5) * 0.035
+        : 0
+      const centerOffsetY = pointer.active
+        ? (pointer.y - height * 0.5) * 0.035
+        : 0
+
+      const nearbyPoints = []
+
+      for (let i = 0; i < stars.length; i += 1) {
+        const star = stars[i]
+
+        if (!prefersReducedMotion) {
+          star.x = (star.x + star.driftX + width) % width
+          star.y = (star.y + star.driftY + height) % height
+        }
+
+        const parallaxX = centerOffsetX * (star.tier + 1) * 0.45
+        const parallaxY =
+          -scrollY * star.parallax + centerOffsetY * (star.tier + 1) * 0.45
+
+        const drawX = (((star.x + parallaxX) % width) + width) % width
+        const drawY = (((star.y + parallaxY) % height) + height) % height
+
+        const twinkle = prefersReducedMotion
+          ? 1
+          : 0.72 +
+            0.28 * Math.sin(now * star.twinkleSpeed + star.twinklePhase)
+        const alpha = Math.min(1, Math.max(0.08, star.baseAlpha * twinkle))
+        const { r, g, b } = star.color
+
+        if (star.tier === 2) {
+          const glowRadius = star.radius * 4.2
+          const glow = ctx.createRadialGradient(
+            drawX,
+            drawY,
+            0,
+            drawX,
+            drawY,
+            glowRadius
+          )
+          glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${alpha * 0.55})`)
+          glow.addColorStop(0.45, `rgba(103, 232, 249, ${alpha * 0.16})`)
+          glow.addColorStop(1, 'rgba(103, 232, 249, 0)')
+          ctx.fillStyle = glow
+          ctx.beginPath()
+          ctx.arc(drawX, drawY, glowRadius, 0, Math.PI * 2)
+          ctx.fill()
+
+          if (star.hasSpikes) {
+            const spikeLen = star.radius * 5.2
+            ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.36})`
+            ctx.lineWidth = 0.75
+            ctx.beginPath()
+            ctx.moveTo(drawX - spikeLen, drawY)
+            ctx.lineTo(drawX + spikeLen, drawY)
+            ctx.moveTo(drawX, drawY - spikeLen)
+            ctx.lineTo(drawX, drawY + spikeLen)
+            ctx.stroke()
+          }
+        }
+
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`
+        ctx.beginPath()
+        ctx.arc(drawX, drawY, star.radius, 0, Math.PI * 2)
+        ctx.fill()
+
+        if (pointer.active && star.tier >= 1) {
+          const dx = drawX - pointer.x
+          const dy = drawY - pointer.y
+          const distSq = dx * dx + dy * dy
+          const maxDist = 148
+          if (distSq < maxDist * maxDist) {
+            nearbyPoints.push({
+              x: drawX,
+              y: drawY,
+              dist: Math.sqrt(distSq),
+              maxDist,
+            })
+          }
+        }
+      }
+
+      if (pointer.active && nearbyPoints.length > 0) {
+        for (let i = 0; i < nearbyPoints.length; i += 1) {
+          const pt = nearbyPoints[i]
+          const strength = (1 - pt.dist / pt.maxDist) * 0.24
+          ctx.strokeStyle = `rgba(103, 232, 249, ${strength})`
+          ctx.lineWidth = 0.75
+          ctx.beginPath()
+          ctx.moveTo(pointer.x, pointer.y)
+          ctx.lineTo(pt.x, pt.y)
+          ctx.stroke()
+        }
+      }
+
+      if (!prefersReducedMotion) {
+        if (now >= nextShootingStarAt && shootingStars.length < 2) {
+          spawnShootingStar(now)
+          nextShootingStarAt = now + 3800 + Math.random() * 4400
+        }
+
+        for (let i = shootingStars.length - 1; i >= 0; i -= 1) {
+          const meteor = shootingStars[i]
+          meteor.x += meteor.vx
+          meteor.y += meteor.vy
+          meteor.life += 1
+
+          const progress = meteor.life / meteor.maxLife
+          const fade =
+            progress < 0.2
+              ? progress / 0.2
+              : Math.max(0, 1 - (progress - 0.2) / 0.8)
+
+          const speedMag = Math.hypot(meteor.vx, meteor.vy) || 1
+          const tailX = meteor.x - (meteor.vx / speedMag) * meteor.length
+          const tailY = meteor.y - (meteor.vy / speedMag) * meteor.length
+
+          const grad = ctx.createLinearGradient(
+            meteor.x,
+            meteor.y,
+            tailX,
+            tailY
+          )
+          grad.addColorStop(0, `rgba(248, 250, 252, ${0.92 * fade})`)
+          grad.addColorStop(0.28, `rgba(103, 232, 249, ${0.58 * fade})`)
+          grad.addColorStop(0.7, `rgba(167, 139, 250, ${0.2 * fade})`)
+          grad.addColorStop(1, 'rgba(103, 232, 249, 0)')
+
+          ctx.strokeStyle = grad
+          ctx.lineWidth = 1.6
+          ctx.lineCap = 'round'
+          ctx.beginPath()
+          ctx.moveTo(meteor.x, meteor.y)
+          ctx.lineTo(tailX, tailY)
+          ctx.stroke()
+
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.95 * fade})`
+          ctx.beginPath()
+          ctx.arc(meteor.x, meteor.y, 1.7, 0, Math.PI * 2)
+          ctx.fill()
+
+          if (
+            meteor.life >= meteor.maxLife ||
+            meteor.x > width + 150 ||
+            meteor.y > height + 150
+          ) {
+            shootingStars.splice(i, 1)
+          }
+        }
+      }
+    }
+
+    const tick = (now) => {
+      drawScene(now)
+      if (!prefersReducedMotion) {
+        animationFrameId = window.requestAnimationFrame(tick)
+      }
+    }
+
+    resizeCanvas()
+
+    if (prefersReducedMotion) {
+      drawScene(performance.now())
+    } else {
+      animationFrameId = window.requestAnimationFrame(tick)
+    }
+
+    const handleScroll = () => {
+      scrollY = window.scrollY || 0
+      if (prefersReducedMotion) {
+        drawScene(performance.now())
+      }
+    }
+
+    const handlePointerMove = (event) => {
+      if (event.pointerType === 'touch') return
+      if (!pointer.active) {
+        pointer.x = event.clientX
+        pointer.y = event.clientY
+        pointer.active = true
+      }
+      pointer.targetX = event.clientX
+      pointer.targetY = event.clientY
+    }
+
+    const handlePointerLeave = () => {
+      pointer.active = false
+    }
+
+    const handleMotionPreferenceChange = (event) => {
+      prefersReducedMotion = event.matches
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId)
+        animationFrameId = null
+      }
+      if (prefersReducedMotion) {
+        shootingStars = []
+        drawScene(performance.now())
+      } else {
+        animationFrameId = window.requestAnimationFrame(tick)
+      }
+    }
+
+    window.addEventListener('resize', resizeCanvas)
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    window.addEventListener('pointermove', handlePointerMove, { passive: true })
+    window.addEventListener('pointerleave', handlePointerLeave)
+
+    if (typeof reducedMotionQuery.addEventListener === 'function') {
+      reducedMotionQuery.addEventListener(
+        'change',
+        handleMotionPreferenceChange
+      )
+    } else {
+      reducedMotionQuery.addListener(handleMotionPreferenceChange)
+    }
+
+    return () => {
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId)
+      }
+      window.removeEventListener('resize', resizeCanvas)
+      window.removeEventListener('scroll', handleScroll)
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerleave', handlePointerLeave)
+      if (typeof reducedMotionQuery.removeEventListener === 'function') {
+        reducedMotionQuery.removeEventListener(
+          'change',
+          handleMotionPreferenceChange
+        )
+      } else {
+        reducedMotionQuery.removeListener(handleMotionPreferenceChange)
+      }
+    }
+  }, [])
+
+  return (
+    <div className="space-backdrop" aria-hidden="true">
+      <div className="space-nebula-layer">
+        <div className="space-nebula space-nebula-cyan" />
+        <div className="space-nebula space-nebula-violet" />
+        <div className="space-nebula space-nebula-indigo" />
+      </div>
+      <div className="space-grid-overlay" />
+      <canvas ref={canvasRef} className="space-canvas" />
+    </div>
+  )
+}
+
 function App() {
   /*
 =========================
@@ -1936,6 +2320,19 @@ Cleanup helpers
         triggerEl.focus()
       })
     }
+  }, [])
+
+  const handleCardPointerMove = useCallback((event) => {
+    if (event.pointerType === 'touch') return
+    const card = event.target.closest(
+      '.project-card, .credential-card, .extra-card, .skills-grid > div, .training-details > article'
+    )
+    if (!card) return
+    const rect = card.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    card.style.setProperty('--spot-x', `${x}px`)
+    card.style.setProperty('--spot-y', `${y}px`)
   }, [])
   /*
 =========================
@@ -2081,11 +2478,14 @@ Hero text rendering
   return (
     <main
       className="portfolio-app"
+      onPointerMove={handleCardPointerMove}
       style={{
         fontFamily:
           PORTFOLIO_FONT,
       }}
     >
+      <SpaceBackground />
+
       {/* =====================================================
           Portfolio-specific CSS overrides
           ===================================================== */}
@@ -2113,11 +2513,15 @@ Hero text rendering
       }
 
       .portfolio-app .hero-primary-text {
-        color: #d9e0e8;
+        color: #e2e8f0;
+        text-shadow: 0 0 40px rgba(226, 232, 240, 0.14);
       }
 
       .portfolio-app .hero-accent-text {
         color: #3de5f1;
+        text-shadow:
+          0 0 32px rgba(61, 229, 241, 0.32),
+          0 0 64px rgba(99, 102, 241, 0.18);
       }
 
       /*
@@ -2143,6 +2547,9 @@ Hero text rendering
         vertical-align: -0.05em;
 
         background: #3de5f1;
+        box-shadow:
+          0 0 12px rgba(61, 229, 241, 0.85),
+          0 0 24px rgba(61, 229, 241, 0.45);
 
         border-radius: 1px;
 
@@ -2208,23 +2615,23 @@ Hero text rendering
 
         background:
           rgba(
-            8,
-            10,
+            4,
+            7,
             15,
-            0.86
+            0.78
           );
 
         border-bottom:
           1px solid
           rgba(
-            255,
-            255,
-            255,
-            0.06
+            103,
+            232,
+            249,
+            0.12
           );
 
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
       }
 
       .portfolio-app .hero-section {
@@ -2264,20 +2671,20 @@ Hero text rendering
         border:
           1px solid
           rgba(
-            255,
-            255,
-            255,
-            0.09
+            148,
+            163,
+            184,
+            0.16
           );
 
         border-radius: 999px;
 
         background:
           rgba(
-            255,
-            255,
-            255,
-            0.012
+            15,
+            23,
+            42,
+            0.55
           );
 
         color:
@@ -2311,12 +2718,26 @@ Hero text rendering
        */
 
       .portfolio-app .status-live {
+        border-color:
+          rgba(
+            103,
+            232,
+            249,
+            0.26
+          );
+        background:
+          rgba(
+            103,
+            232,
+            249,
+            0.05
+          );
         color:
           rgba(
             230,
             236,
             244,
-            0.92
+            0.94
           );
       }
 
@@ -2453,7 +2874,7 @@ Hero text rendering
             103,
             232,
             249,
-            0.22
+            0.26
           );
 
         border-radius: 999px;
@@ -2463,7 +2884,7 @@ Hero text rendering
             103,
             232,
             249,
-            0.035
+            0.05
           );
 
         color: #67e8f9;
@@ -2484,6 +2905,7 @@ Hero text rendering
         transition:
           transform 0.2s ease,
           border-color 0.2s ease,
+          box-shadow 0.2s ease,
           background 0.2s ease,
           color 0.2s ease;
       }
@@ -2498,7 +2920,7 @@ Hero text rendering
             103,
             232,
             249,
-            0.48
+            0.55
           );
 
         background:
@@ -2506,8 +2928,17 @@ Hero text rendering
             103,
             232,
             249,
-            0.08
+            0.12
           );
+
+        box-shadow:
+          0 0 20px
+            rgba(
+              103,
+              232,
+              249,
+              0.24
+            );
 
         color: #a5f3fc;
       }
@@ -2565,8 +2996,8 @@ Hero text rendering
         width: 40px;
         height: 40px;
         padding: 0;
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(148, 163, 184, 0.18);
         border-radius: 8px;
         cursor: pointer;
         z-index: 1002;
@@ -2574,8 +3005,8 @@ Hero text rendering
       }
 
       .portfolio-app .nav-toggle:hover {
-        background: rgba(103, 232, 249, 0.08);
-        border-color: rgba(103, 232, 249, 0.4);
+        background: rgba(103, 232, 249, 0.1);
+        border-color: rgba(103, 232, 249, 0.45);
       }
 
       .portfolio-app .nav-toggle-bar {
@@ -2617,11 +3048,12 @@ Hero text rendering
         font-size: 0.82rem;
         font-weight: 500;
         white-space: nowrap;
-        transition: color 0.2s ease, opacity 0.2s ease;
+        transition: color 0.2s ease, text-shadow 0.2s ease, opacity 0.2s ease;
       }
 
       .portfolio-app .nav-links a:hover {
         color: var(--text);
+        text-shadow: 0 0 14px rgba(103, 232, 249, 0.4);
       }
 
       @media (max-width: 768px) {
@@ -2641,9 +3073,9 @@ Hero text rendering
           left: 0;
           width: 100vw;
           height: 100vh;
-          background: rgba(8, 10, 15, 0.97);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
+          background: rgba(3, 5, 12, 0.96);
+          backdrop-filter: blur(22px);
+          -webkit-backdrop-filter: blur(22px);
           flex-direction: column;
           justify-content: center;
           align-items: center;
@@ -2713,27 +3145,40 @@ Hero text rendering
       }
 
       .portfolio-app .extra-card {
+        position: relative;
+        overflow: hidden;
         padding: 36px;
         display: flex;
         flex-direction: column;
         border: 1px solid var(--border);
-        border-radius: 14px;
-        background: linear-gradient(
-          145deg,
-          rgba(255, 255, 255, 0.035),
-          rgba(255, 255, 255, 0.01)
-        );
-        transition: transform 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+        border-radius: 16px;
+        background:
+          radial-gradient(
+            520px circle at var(--spot-x, 50%) var(--spot-y, 0%),
+            rgba(103, 232, 249, 0.08),
+            rgba(167, 139, 250, 0.04) 45%,
+            transparent 75%
+          ),
+          linear-gradient(
+            155deg,
+            rgba(15, 23, 42, 0.72),
+            rgba(7, 10, 20, 0.84)
+          );
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        box-shadow:
+          0 18px 46px -14px rgba(0, 0, 0, 0.72),
+          inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
       }
 
       .portfolio-app .extra-card:hover {
         transform: translateY(-5px);
         border-color: var(--border-hover);
-        background: linear-gradient(
-          145deg,
-          rgba(255, 255, 255, 0.045),
-          rgba(255, 255, 255, 0.012)
-        );
+        box-shadow:
+          0 24px 60px -12px rgba(2, 6, 23, 0.88),
+          0 0 34px -6px rgba(103, 232, 249, 0.18),
+          inset 0 1px 0 rgba(103, 232, 249, 0.22);
       }
 
       .portfolio-app .extra-top {
@@ -2747,7 +3192,8 @@ Hero text rendering
         color: var(--accent);
         font-size: 0.68rem;
         font-weight: 700;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.12em;
+        text-shadow: 0 0 12px rgba(103, 232, 249, 0.45);
       }
 
       .portfolio-app .extra-status {
@@ -2797,21 +3243,22 @@ Hero text rendering
         gap: 7px;
         margin-top: 26px;
         padding: 8px 14px;
-        border: 1px solid rgba(103, 232, 249, 0.28);
+        border: 1px solid rgba(103, 232, 249, 0.3);
         border-radius: 999px;
-        background: rgba(103, 232, 249, 0.04);
+        background: rgba(103, 232, 249, 0.06);
         color: #67e8f9;
         font-size: 0.72rem;
         font-weight: 800;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+        transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, color 0.2s ease;
       }
 
       .portfolio-app .extra-live-link:hover {
         transform: translateY(-2px);
-        border-color: rgba(103, 232, 249, 0.55);
-        background: rgba(103, 232, 249, 0.1);
+        border-color: rgba(103, 232, 249, 0.58);
+        background: rgba(103, 232, 249, 0.14);
+        box-shadow: 0 0 22px rgba(103, 232, 249, 0.25);
         color: #a5f3fc;
       }
 
@@ -2857,7 +3304,8 @@ Hero text rendering
       className="brand"
       onClick={() => setIsNavOpen(false)}
     >
-      Samuel John-Ibro
+      <span className="brand-orbit-icon" aria-hidden="true" />
+      <span>Samuel John-Ibro</span>
     </a>
 
     <button
@@ -2933,6 +3381,12 @@ Hero text rendering
     className="hero-section"
     ref={heroSectionRef}
   >
+    <div className="hero-cosmos" aria-hidden="true">
+      <div className="hero-orbit-ring ring-1" />
+      <div className="hero-orbit-ring ring-2" />
+      <div className="hero-orbit-ring ring-3" />
+    </div>
+
     <p className="eyebrow">
       SOFTWARE ENGINEER • FOUNDER • BUILDER • QA TESTER
     </p>
