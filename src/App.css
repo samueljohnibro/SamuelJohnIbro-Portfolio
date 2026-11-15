@@ -1274,6 +1274,7 @@ main {
 }
 
 .project-card:hover .project-preview,
+.extra-card:hover .project-preview,
 .project-preview:hover {
   border-color: rgba(103, 232, 249, 0.34);
   box-shadow:
@@ -2430,6 +2431,17 @@ main {
   margin-top: 24px;
 }
 
+.extra-card .project-preview {
+  margin-top: 22px;
+}
+
+@media (min-width: 769px) {
+  .extra-card .project-preview-viewport {
+    aspect-ratio: 16 / 9;
+    max-height: 460px;
+  }
+}
+
 .extra-card h3 {
   color: var(--text);
   font-size: 1.45rem;
@@ -2445,8 +2457,8 @@ main {
   letter-spacing: 0.02em;
 }
 
-.extra-card p:not(.extra-number):not(.extra-subtitle) {
-  margin-top: 16px;
+.extra-card > p:not(.extra-number):not(.extra-subtitle) {
+  margin-top: 20px;
   color: var(--muted);
   font-size: 0.92rem;
   line-height: 1.8;

@@ -3544,6 +3544,17 @@ Hero text rendering
         margin-top: 24px;
       }
 
+      .portfolio-app .extra-card .project-preview {
+        margin-top: 22px;
+      }
+
+      @media (min-width: 769px) {
+        .portfolio-app .extra-card .project-preview-viewport {
+          aspect-ratio: 16 / 9;
+          max-height: 460px;
+        }
+      }
+
       .portfolio-app .extra-card h3 {
         color: var(--text);
         font-size: 1.45rem;
@@ -3559,8 +3570,8 @@ Hero text rendering
         letter-spacing: 0.02em;
       }
 
-      .portfolio-app .extra-card p:not(.extra-number):not(.extra-subtitle) {
-        margin-top: 16px;
+      .portfolio-app .extra-card > p:not(.extra-number):not(.extra-subtitle) {
+        margin-top: 20px;
         color: var(--muted);
         font-size: 0.92rem;
         line-height: 1.8;
@@ -4167,6 +4178,13 @@ Hero text rendering
           </span>
         </div>
 
+        <div className="project-logo">
+          <img
+            src="/assets/silachomka-logo.png"
+            alt="silachomka logo"
+          />
+        </div>
+
         <div className="extra-header-info">
           <h3>
             silachomka — Official Artist Home
@@ -4176,6 +4194,23 @@ Hero text rendering
             Music Producer • Artist • chomkaMUSIC™
           </p>
         </div>
+
+        <ProjectSitePreview
+          title="silachomka — Official Artist Home"
+          url="https://silachomka.vercel.app"
+          isPaused={Boolean(expandedProject)}
+          onExpand={(triggerEl) =>
+            handleOpenPreview(
+              {
+                id: 'silachomka-extra',
+                title: 'silachomka — Official Artist Home',
+                liveUrl: 'https://silachomka.vercel.app',
+                isLive: true,
+              },
+              triggerEl
+            )
+          }
+        />
 
         <p>
           My official artist website featuring music releases, beat store,
