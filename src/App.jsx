@@ -2092,7 +2092,7 @@ function SpaceBackground() {
         ryFactor: 0.145,
         tilt: (-22 * Math.PI) / 180,
         dash: [],
-        color: { r: 103, g: 232, b: 249 },
+        color: { r: 224, g: 224, b: 224 },
         ringAlpha: 0.14,
         lineWidth: 1.1,
         hasApsisTicks: true,
@@ -2118,7 +2118,7 @@ function SpaceBackground() {
         ryFactor: 0.21,
         tilt: (-14 * Math.PI) / 180,
         dash: [4, 10],
-        color: { r: 167, g: 139, b: 250 },
+        color: { r: 168, g: 168, b: 168 },
         ringAlpha: 0.13,
         lineWidth: 1,
         hasApsisTicks: true,
@@ -2137,7 +2137,7 @@ function SpaceBackground() {
         ryFactor: 0.27,
         tilt: (-28 * Math.PI) / 180,
         dash: [],
-        color: { r: 56, g: 189, b: 248 },
+        color: { r: 202, g: 202, b: 202 },
         ringAlpha: 0.085,
         lineWidth: 0.9,
         hasApsisTicks: false,
@@ -2163,7 +2163,7 @@ function SpaceBackground() {
         ryFactor: 0.19,
         tilt: (32 * Math.PI) / 180,
         dash: [2, 12],
-        color: { r: 99, g: 102, b: 241 },
+        color: { r: 132, g: 132, b: 132 },
         ringAlpha: 0.14,
         lineWidth: 0.95,
         hasApsisTicks: false,
@@ -2182,7 +2182,7 @@ function SpaceBackground() {
         ryFactor: 0.33,
         tilt: (-18 * Math.PI) / 180,
         dash: [16, 9, 2, 9],
-        color: { r: 148, g: 163, b: 184 },
+        color: { r: 152, g: 152, b: 152 },
         ringAlpha: 0.075,
         lineWidth: 0.85,
         hasApsisTicks: true,
@@ -2291,7 +2291,7 @@ function SpaceBackground() {
       const scrollGridOffset = (scrollY * 0.08) % gridStepY
 
       ctx.lineWidth = 0.75
-      ctx.strokeStyle = 'rgba(103, 232, 249, 0.028)'
+      ctx.strokeStyle = 'rgba(212, 212, 212, 0.028)'
 
       // Horizontal spacetime contours
       for (let r = -1; r <= rows; r += 1) {
@@ -2347,9 +2347,9 @@ function SpaceBackground() {
           pointer.y,
           190
         )
-        lensGlow.addColorStop(0, 'rgba(103, 232, 249, 0.055)')
-        lensGlow.addColorStop(0.5, 'rgba(99, 102, 241, 0.025)')
-        lensGlow.addColorStop(1, 'rgba(103, 232, 249, 0)')
+        lensGlow.addColorStop(0, 'rgba(229, 229, 229, 0.05)')
+        lensGlow.addColorStop(0.5, 'rgba(140, 140, 140, 0.024)')
+        lensGlow.addColorStop(1, 'rgba(212, 212, 212, 0)')
         ctx.fillStyle = lensGlow
         ctx.beginPath()
         ctx.arc(pointer.x, pointer.y, 190, 0, Math.PI * 2)
@@ -2360,16 +2360,16 @@ function SpaceBackground() {
       const timeSec = prefersReducedMotion ? 0 : now * 0.00045
       for (let w = 0; w < 3; w += 1) {
         const waveGrad = ctx.createLinearGradient(0, 0, width, 0)
-        waveGrad.addColorStop(0, 'rgba(34, 211, 238, 0)')
+        waveGrad.addColorStop(0, 'rgba(180, 180, 180, 0)')
         waveGrad.addColorStop(
           0.3,
-          w === 1 ? 'rgba(167, 139, 250, 0.055)' : 'rgba(103, 232, 249, 0.055)'
+          w === 1 ? 'rgba(163, 163, 163, 0.055)' : 'rgba(212, 212, 212, 0.055)'
         )
         waveGrad.addColorStop(
           0.7,
-          w === 0 ? 'rgba(99, 102, 241, 0.06)' : 'rgba(34, 211, 238, 0.045)'
+          w === 0 ? 'rgba(125, 125, 125, 0.058)' : 'rgba(180, 180, 180, 0.045)'
         )
-        waveGrad.addColorStop(1, 'rgba(99, 102, 241, 0)')
+        waveGrad.addColorStop(1, 'rgba(140, 140, 140, 0)')
 
         ctx.strokeStyle = waveGrad
         ctx.lineWidth = 1.2
@@ -2401,10 +2401,10 @@ function SpaceBackground() {
         focalY,
         planetRadius * 1.75
       )
-      coronaGrad.addColorStop(0, 'rgba(34, 211, 238, 0.13)')
-      coronaGrad.addColorStop(0.42, 'rgba(99, 102, 241, 0.065)')
-      coronaGrad.addColorStop(0.75, 'rgba(139, 92, 246, 0.02)')
-      coronaGrad.addColorStop(1, 'rgba(3, 5, 10, 0)')
+      coronaGrad.addColorStop(0, 'rgba(212, 212, 212, 0.11)')
+      coronaGrad.addColorStop(0.42, 'rgba(140, 140, 140, 0.055)')
+      coronaGrad.addColorStop(0.75, 'rgba(95, 95, 95, 0.02)')
+      coronaGrad.addColorStop(1, 'rgba(7, 7, 7, 0)')
 
       ctx.fillStyle = coronaGrad
       ctx.beginPath()
@@ -2420,9 +2420,9 @@ function SpaceBackground() {
         focalY,
         planetRadius
       )
-      planetBodyGrad.addColorStop(0, 'rgba(12, 20, 38, 0.94)')
-      planetBodyGrad.addColorStop(0.55, 'rgba(5, 8, 18, 0.97)')
-      planetBodyGrad.addColorStop(1, 'rgba(2, 4, 9, 0.99)')
+      planetBodyGrad.addColorStop(0, 'rgba(26, 26, 26, 0.94)')
+      planetBodyGrad.addColorStop(0.55, 'rgba(12, 12, 12, 0.97)')
+      planetBodyGrad.addColorStop(1, 'rgba(5, 5, 5, 0.99)')
 
       ctx.fillStyle = planetBodyGrad
       ctx.beginPath()
@@ -2436,10 +2436,10 @@ function SpaceBackground() {
         focalX + planetRadius * 0.85,
         focalY + planetRadius * 0.85
       )
-      limbGrad.addColorStop(0, 'rgba(224, 242, 254, 0.62)')
-      limbGrad.addColorStop(0.32, 'rgba(103, 232, 249, 0.42)')
-      limbGrad.addColorStop(0.65, 'rgba(99, 102, 241, 0.16)')
-      limbGrad.addColorStop(1, 'rgba(15, 23, 42, 0.03)')
+      limbGrad.addColorStop(0, 'rgba(245, 245, 245, 0.56)')
+      limbGrad.addColorStop(0.32, 'rgba(200, 200, 200, 0.36)')
+      limbGrad.addColorStop(0.65, 'rgba(120, 120, 120, 0.15)')
+      limbGrad.addColorStop(1, 'rgba(32, 32, 32, 0.03)')
 
       ctx.strokeStyle = limbGrad
       ctx.lineWidth = 1.6
@@ -2542,7 +2542,7 @@ function SpaceBackground() {
           ctx.fill()
 
           // Crisp probe core
-          ctx.fillStyle = '#f8fafc'
+          ctx.fillStyle = '#f5f5f5'
           ctx.beginPath()
           ctx.arc(head.x, head.y, sat.size, 0, Math.PI * 2)
           ctx.fill()
@@ -2559,7 +2559,7 @@ function SpaceBackground() {
       }
 
       // 5. Minimalist Astrometry Reference Crosshairs
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)'
+      ctx.strokeStyle = 'rgba(163, 163, 163, 0.18)'
       ctx.lineWidth = 0.8
       for (let i = 0; i < referenceCrosshairs.length; i += 1) {
         const ref = referenceCrosshairs[i]
@@ -2931,15 +2931,15 @@ Hero text rendering
       }
 
       .portfolio-app .hero-primary-text {
-        color: #e2e8f0;
-        text-shadow: 0 0 40px rgba(226, 232, 240, 0.14);
+        color: #a3a3a3;
+        text-shadow: 0 0 40px rgba(163, 163, 163, 0.14);
       }
 
       .portfolio-app .hero-accent-text {
-        color: #3de5f1;
+        color: #f5f5f5;
         text-shadow:
-          0 0 32px rgba(61, 229, 241, 0.32),
-          0 0 64px rgba(99, 102, 241, 0.18);
+          0 0 32px rgba(245, 245, 245, 0.24),
+          0 0 64px rgba(163, 163, 163, 0.16);
       }
 
       .portfolio-app .hero-pending-text {
@@ -2973,10 +2973,10 @@ Hero text rendering
 
         vertical-align: -0.05em;
 
-        background: #3de5f1;
+        background: #d4d4d4;
         box-shadow:
-          0 0 12px rgba(61, 229, 241, 0.85),
-          0 0 24px rgba(61, 229, 241, 0.45);
+          0 0 12px rgba(229, 229, 229, 0.8),
+          0 0 24px rgba(163, 163, 163, 0.42);
 
         border-radius: 1px;
 
@@ -3042,18 +3042,18 @@ Hero text rendering
 
         background:
           rgba(
-            4,
-            7,
-            15,
+            10,
+            10,
+            10,
             0.78
           );
 
         border-bottom:
           1px solid
           rgba(
-            103,
-            232,
-            249,
+            212,
+            212,
+            212,
             0.12
           );
 
@@ -3098,28 +3098,28 @@ Hero text rendering
         border:
           1px solid
           rgba(
-            148,
             163,
-            184,
-            0.16
+            163,
+            163,
+            0.18
           );
 
         border-radius: 999px;
 
         background:
           rgba(
-            15,
-            23,
-            42,
-            0.55
+            24,
+            24,
+            24,
+            0.64
           );
 
         color:
           rgba(
-            230,
-            236,
-            244,
-            0.88
+            235,
+            235,
+            235,
+            0.9
           );
 
         font-size:
@@ -3147,23 +3147,23 @@ Hero text rendering
       .portfolio-app .status-live {
         border-color:
           rgba(
-            103,
-            232,
-            249,
-            0.26
+            212,
+            212,
+            212,
+            0.28
           );
         background:
           rgba(
-            103,
-            232,
-            249,
-            0.05
+            212,
+            212,
+            212,
+            0.055
           );
         color:
           rgba(
-            230,
-            236,
-            244,
+            245,
+            245,
+            245,
             0.94
           );
       }
@@ -3180,28 +3180,28 @@ Hero text rendering
         border-radius: 50%;
 
         background:
-          #67e8f9;
+          #e5e5e5;
 
         box-shadow:
           0 0 0 3px
             rgba(
-              103,
-              232,
-              249,
-              0.09
+              212,
+              212,
+              212,
+              0.1
             ),
           0 0 8px
             rgba(
-              103,
-              232,
-              249,
+              229,
+              229,
+              229,
               0.75
             ),
           0 0 16px
             rgba(
-              103,
-              232,
-              249,
+              163,
+              163,
+              163,
               0.4
             );
 
@@ -3220,23 +3220,23 @@ Hero text rendering
           box-shadow:
             0 0 0 3px
               rgba(
-                103,
-                232,
-                249,
-                0.07
+                212,
+                212,
+                212,
+                0.08
               ),
             0 0 7px
               rgba(
-                103,
-                232,
-                249,
+                229,
+                229,
+                229,
                 0.55
               ),
             0 0 13px
               rgba(
-                103,
-                232,
-                249,
+                163,
+                163,
+                163,
                 0.3
               );
         }
@@ -3247,24 +3247,24 @@ Hero text rendering
           box-shadow:
             0 0 0 3px
               rgba(
-                103,
-                232,
-                249,
-                0.12
+                229,
+                229,
+                229,
+                0.14
               ),
             0 0 10px
               rgba(
-                103,
-                232,
-                249,
+                245,
+                245,
+                245,
                 0.85
               ),
             0 0 20px
               rgba(
-                103,
-                232,
-                249,
-                0.48
+                212,
+                212,
+                212,
+                0.45
               );
         }
       }
@@ -3298,9 +3298,9 @@ Hero text rendering
         border:
           1px solid
           rgba(
-            103,
-            232,
-            249,
+            212,
+            212,
+            212,
             0.26
           );
 
@@ -3308,13 +3308,13 @@ Hero text rendering
 
         background:
           rgba(
-            103,
-            232,
-            249,
-            0.05
+            212,
+            212,
+            212,
+            0.055
           );
 
-        color: #67e8f9;
+        color: #e5e5e5;
 
         font-size:
           0.67rem;
@@ -3344,30 +3344,30 @@ Hero text rendering
 
         border-color:
           rgba(
-            103,
-            232,
-            249,
+            229,
+            229,
+            229,
             0.55
           );
 
         background:
           rgba(
-            103,
-            232,
-            249,
+            212,
+            212,
+            212,
             0.12
           );
 
         box-shadow:
           0 0 20px
             rgba(
-              103,
-              232,
-              249,
-              0.24
+              212,
+              212,
+              212,
+              0.22
             );
 
-        color: #a5f3fc;
+        color: #ffffff;
       }
 
       .portfolio-app
@@ -3381,21 +3381,21 @@ Hero text rendering
         border-radius: 50%;
 
         background:
-          #67e8f9;
+          #e5e5e5;
 
         box-shadow:
           0 0 0 3px
             rgba(
-              103,
-              232,
-              249,
-              0.08
+              212,
+              212,
+              212,
+              0.09
             ),
           0 0 10px
             rgba(
-              103,
-              232,
-              249,
+              229,
+              229,
+              229,
               0.5
             );
       }
@@ -3423,8 +3423,8 @@ Hero text rendering
         width: 40px;
         height: 40px;
         padding: 0;
-        background: rgba(15, 23, 42, 0.6);
-        border: 1px solid rgba(148, 163, 184, 0.18);
+        background: rgba(24, 24, 24, 0.68);
+        border: 1px solid rgba(163, 163, 163, 0.18);
         border-radius: 8px;
         cursor: pointer;
         z-index: 1002;
@@ -3432,8 +3432,8 @@ Hero text rendering
       }
 
       .portfolio-app .nav-toggle:hover {
-        background: rgba(103, 232, 249, 0.1);
-        border-color: rgba(103, 232, 249, 0.45);
+        background: rgba(212, 212, 212, 0.1);
+        border-color: rgba(212, 212, 212, 0.42);
       }
 
       .portfolio-app .nav-toggle-bar {
@@ -3480,7 +3480,7 @@ Hero text rendering
 
       .portfolio-app .nav-links a:hover {
         color: var(--text);
-        text-shadow: 0 0 14px rgba(103, 232, 249, 0.4);
+        text-shadow: 0 0 14px rgba(212, 212, 212, 0.35);
       }
 
       @media (max-width: 768px) {
@@ -3500,7 +3500,7 @@ Hero text rendering
           left: 0;
           width: 100vw;
           height: 100vh;
-          background: rgba(3, 5, 12, 0.96);
+          background: rgba(10, 10, 10, 0.96);
           backdrop-filter: blur(22px);
           -webkit-backdrop-filter: blur(22px);
           flex-direction: column;
@@ -3533,7 +3533,7 @@ Hero text rendering
         .portfolio-app .nav-links a:hover,
         .portfolio-app .nav-links a:active {
           color: var(--accent);
-          background: rgba(103, 232, 249, 0.08);
+          background: rgba(212, 212, 212, 0.08);
           transform: translateX(4px);
         }
 
@@ -3582,14 +3582,14 @@ Hero text rendering
         background:
           radial-gradient(
             520px circle at var(--spot-x, 50%) var(--spot-y, 0%),
-            rgba(103, 232, 249, 0.08),
-            rgba(167, 139, 250, 0.04) 45%,
+            rgba(212, 212, 212, 0.075),
+            rgba(163, 163, 163, 0.035) 45%,
             transparent 75%
           ),
           linear-gradient(
             155deg,
-            rgba(15, 23, 42, 0.72),
-            rgba(7, 10, 20, 0.84)
+            rgba(24, 24, 24, 0.76),
+            rgba(12, 12, 12, 0.86)
           );
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
@@ -3603,9 +3603,9 @@ Hero text rendering
         transform: translateY(-5px);
         border-color: var(--border-hover);
         box-shadow:
-          0 24px 60px -12px rgba(2, 6, 23, 0.88),
-          0 0 34px -6px rgba(103, 232, 249, 0.18),
-          inset 0 1px 0 rgba(103, 232, 249, 0.22);
+          0 24px 60px -12px rgba(0, 0, 0, 0.88),
+          0 0 34px -6px rgba(212, 212, 212, 0.14),
+          inset 0 1px 0 rgba(229, 229, 229, 0.2);
       }
 
       .portfolio-app .extra-top {
@@ -3620,15 +3620,15 @@ Hero text rendering
         font-size: 0.68rem;
         font-weight: 700;
         letter-spacing: 0.12em;
-        text-shadow: 0 0 12px rgba(103, 232, 249, 0.45);
+        text-shadow: 0 0 12px rgba(212, 212, 212, 0.35);
       }
 
       .portfolio-app .extra-status {
         padding: 5px 10px;
-        border: 1px solid rgba(103, 232, 249, 0.25);
+        border: 1px solid rgba(212, 212, 212, 0.24);
         border-radius: 999px;
-        background: rgba(103, 232, 249, 0.04);
-        color: #67e8f9;
+        background: rgba(212, 212, 212, 0.045);
+        color: #e5e5e5;
         font-size: 0.62rem;
         font-weight: 800;
         letter-spacing: 0.09em;
@@ -3681,10 +3681,10 @@ Hero text rendering
         gap: 7px;
         margin-top: 26px;
         padding: 8px 14px;
-        border: 1px solid rgba(103, 232, 249, 0.3);
+        border: 1px solid rgba(212, 212, 212, 0.28);
         border-radius: 999px;
-        background: rgba(103, 232, 249, 0.06);
-        color: #67e8f9;
+        background: rgba(212, 212, 212, 0.06);
+        color: #e5e5e5;
         font-size: 0.72rem;
         font-weight: 800;
         letter-spacing: 0.08em;
@@ -3694,10 +3694,10 @@ Hero text rendering
 
       .portfolio-app .extra-live-link:hover {
         transform: translateY(-2px);
-        border-color: rgba(103, 232, 249, 0.58);
-        background: rgba(103, 232, 249, 0.14);
-        box-shadow: 0 0 22px rgba(103, 232, 249, 0.25);
-        color: #a5f3fc;
+        border-color: rgba(229, 229, 229, 0.54);
+        background: rgba(212, 212, 212, 0.14);
+        box-shadow: 0 0 22px rgba(212, 212, 212, 0.2);
+        color: #ffffff;
       }
 
       .portfolio-app .extra-live-arrow {
