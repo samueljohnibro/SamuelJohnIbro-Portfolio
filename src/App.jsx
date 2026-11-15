@@ -49,6 +49,23 @@ const PROJECTS = [
     tags: ['Flutter', 'Supabase', 'Audio'],
     developmentNote: 'Product development in progress.',
   },
+  {
+    id: 'silachomka',
+    number: '04',
+    status: 'LIVE',
+    isLive: true,
+    logo: {
+      src: '/assets/silachomka-logo.png',
+      alt: 'silachomka logo',
+    },
+    title: 'silachomka',
+    description:
+      'Official artist platform and creative web experience engineered for music releases, an interactive beat store, visual archive, and sonic catalog under chomkaMUSIC™.',
+    tags: ['JavaScript', 'React', 'Beat Store', 'Vercel'],
+    liveUrl: 'https://silachomka.vercel.app',
+    liveLabel: 'VIEW LIVE PROJECT',
+    liveAriaLabel: 'Open silachomka live project',
+  },
 ]
 
 function getPreviewHostname(url) {
@@ -264,6 +281,88 @@ function ProjectPreviewModal({ project, onClose }) {
 const PROJECTS_MOBILE_QUERY = '(max-width: 900px)'
 const PROJECTS_COLUMN_TIE_TOLERANCE_PX = 1
 
+function chooseBestColumnAssignments(heights, gap, columnCount = 2) {
+  const count = heights.length
+  if (count === 0) return []
+  if (count === 1 || columnCount <= 1) return Array(count).fill(0)
+
+  const greedyPredict = (assignmentsSoFar, colHeights) => {
+    let targetCol = 0
+    for (let col = 1; col < columnCount; col += 1) {
+      if (
+        colHeights[col] <
+        colHeights[targetCol] - PROJECTS_COLUMN_TIE_TOLERANCE_PX
+      ) {
+        targetCol = col
+      }
+    }
+    return targetCol
+  }
+
+  // Fallback to greedy shortest-column for large lists
+  if (count > 12 || columnCount !== 2) {
+    const colHeights = Array(columnCount).fill(0)
+    return heights.map((height) => {
+      const col = greedyPredict(null, colHeights)
+      colHeights[col] += height + gap
+      return col
+    })
+  }
+
+  // Anchor card 0 in column 0 (top-left) and card 1 in column 1 (top-right),
+  // then search remaining cards for the arrangement that minimizes total grid height.
+  const restCount = count - 2
+  const totalMasks = 1 << restCount
+  let bestAssignments = null
+  let bestMaxHeight = Number.POSITIVE_INFINITY
+  let bestImbalance = Number.POSITIVE_INFINITY
+  let bestGreedyMatches = -1
+
+  for (let mask = 0; mask < totalMasks; mask += 1) {
+    const colHeights = [heights[0] + gap, heights[1] + gap]
+    const candidate = [0, 1]
+    let greedyMatches = 2
+
+    for (let bit = 0; bit < restCount; bit += 1) {
+      const cardIndex = bit + 2
+      const greedyCol = greedyPredict(candidate, colHeights)
+      const col = (mask >> bit) & 1
+
+      if (col === greedyCol) {
+        greedyMatches += 1
+      }
+
+      candidate.push(col)
+      colHeights[col] += heights[cardIndex] + gap
+    }
+
+    const finalCol0 = colHeights[0] > 0 ? colHeights[0] - gap : 0
+    const finalCol1 = colHeights[1] > 0 ? colHeights[1] - gap : 0
+    const maxHeight = Math.max(finalCol0, finalCol1)
+    const imbalance = Math.abs(finalCol0 - finalCol1)
+
+    const isStrictlyShorter =
+      maxHeight < bestMaxHeight - PROJECTS_COLUMN_TIE_TOLERANCE_PX
+    const isNearTieHeight =
+      Math.abs(maxHeight - bestMaxHeight) <= PROJECTS_COLUMN_TIE_TOLERANCE_PX
+    const isBetterTieBreak =
+      isNearTieHeight &&
+      (imbalance < bestImbalance - PROJECTS_COLUMN_TIE_TOLERANCE_PX ||
+        (Math.abs(imbalance - bestImbalance) <=
+          PROJECTS_COLUMN_TIE_TOLERANCE_PX &&
+          greedyMatches > bestGreedyMatches))
+
+    if (isStrictlyShorter || isBetterTieBreak) {
+      bestMaxHeight = maxHeight
+      bestImbalance = imbalance
+      bestGreedyMatches = greedyMatches
+      bestAssignments = candidate
+    }
+  }
+
+  return bestAssignments
+}
+
 /* =========================================================
    Projects Grid (Compact Masonry Layout)
    ========================================================= */
@@ -324,19 +423,15 @@ function ProjectsGrid({ projects, isPreviewModalOpen, onOpenPreview }) {
       })
 
       const heights = cards.map((card) => card.getBoundingClientRect().height)
+      const assignments = chooseBestColumnAssignments(
+        heights,
+        gap,
+        columnCount
+      )
       const columnHeights = Array(columnCount).fill(0)
 
       cards.forEach((card, index) => {
-        let targetColumn = 0
-        for (let col = 1; col < columnCount; col += 1) {
-          if (
-            columnHeights[col] <
-            columnHeights[targetColumn] - PROJECTS_COLUMN_TIE_TOLERANCE_PX
-          ) {
-            targetColumn = col
-          }
-        }
-
+        const targetColumn = assignments[index] ?? 0
         const nextLeft = `${targetColumn * (columnWidth + gap)}px`
         const y = columnHeights[targetColumn]
         const nextTop = `${y}px`
@@ -1883,7 +1978,7 @@ function TrainingCarousel() {
 }
 
 /* =========================================================
-   Deep-Space Starfield, Nebula & Shooting Stars Canvas
+   Abstract Orbital & Gravitational Spacetime Architecture
    ========================================================= */
 
 function SpaceBackground() {
@@ -1914,68 +2009,130 @@ function SpaceBackground() {
 
     let scrollY = window.scrollY || 0
 
-    const starPalette = [
-      { r: 248, g: 250, b: 252 }, // pure starlight white
-      { r: 226, g: 232, b: 240 }, // cool white
-      { r: 103, g: 232, b: 249 }, // chomka cyan
-      { r: 147, g: 197, b: 253 }, // rigel blue
-      { r: 196, g: 181, b: 253 }, // nebula violet
-      { r: 254, g: 243, b: 199 }, // warm stellar gold
+    // Keplerian 3D-projected orbital planes & trailing telemetry probes
+    const orbits = [
+      {
+        rxFactor: 0.42,
+        ryFactor: 0.145,
+        tilt: (-22 * Math.PI) / 180,
+        dash: [],
+        color: { r: 103, g: 232, b: 249 },
+        ringAlpha: 0.14,
+        lineWidth: 1.1,
+        hasApsisTicks: true,
+        satellites: [
+          {
+            angle: 0.35,
+            speed: 0.0024,
+            trailArc: 0.62,
+            size: 2.5,
+            hasTargetRing: true,
+          },
+          {
+            angle: 3.45,
+            speed: 0.0024,
+            trailArc: 0.38,
+            size: 1.7,
+            hasTargetRing: false,
+          },
+        ],
+      },
+      {
+        rxFactor: 0.58,
+        ryFactor: 0.21,
+        tilt: (-14 * Math.PI) / 180,
+        dash: [4, 10],
+        color: { r: 167, g: 139, b: 250 },
+        ringAlpha: 0.13,
+        lineWidth: 1,
+        hasApsisTicks: true,
+        satellites: [
+          {
+            angle: 2.1,
+            speed: -0.0016,
+            trailArc: 0.52,
+            size: 2.2,
+            hasTargetRing: true,
+          },
+        ],
+      },
+      {
+        rxFactor: 0.76,
+        ryFactor: 0.27,
+        tilt: (-28 * Math.PI) / 180,
+        dash: [],
+        color: { r: 56, g: 189, b: 248 },
+        ringAlpha: 0.085,
+        lineWidth: 0.9,
+        hasApsisTicks: false,
+        satellites: [
+          {
+            angle: 4.8,
+            speed: 0.0012,
+            trailArc: 0.48,
+            size: 2.1,
+            hasTargetRing: false,
+          },
+          {
+            angle: 1.4,
+            speed: 0.0012,
+            trailArc: 0.35,
+            size: 1.6,
+            hasTargetRing: false,
+          },
+        ],
+      },
+      {
+        rxFactor: 0.31,
+        ryFactor: 0.19,
+        tilt: (32 * Math.PI) / 180,
+        dash: [2, 12],
+        color: { r: 99, g: 102, b: 241 },
+        ringAlpha: 0.14,
+        lineWidth: 0.95,
+        hasApsisTicks: false,
+        satellites: [
+          {
+            angle: 0.9,
+            speed: 0.0031,
+            trailArc: 0.55,
+            size: 1.9,
+            hasTargetRing: false,
+          },
+        ],
+      },
+      {
+        rxFactor: 0.94,
+        ryFactor: 0.33,
+        tilt: (-18 * Math.PI) / 180,
+        dash: [16, 9, 2, 9],
+        color: { r: 148, g: 163, b: 184 },
+        ringAlpha: 0.075,
+        lineWidth: 0.85,
+        hasApsisTicks: true,
+        satellites: [
+          {
+            angle: 5.5,
+            speed: -0.0009,
+            trailArc: 0.42,
+            size: 2.0,
+            hasTargetRing: true,
+          },
+        ],
+      },
     ]
 
-    let stars = []
-    let shootingStars = []
-    let nextShootingStarAt = performance.now() + 2600
-
-    const buildStars = () => {
-      const area = width * height
-      const count = Math.min(210, Math.max(95, Math.round(area / 7600)))
-      const nextStars = []
-
-      for (let i = 0; i < count; i += 1) {
-        const tierRoll = Math.random()
-        const tier = tierRoll < 0.62 ? 0 : tierRoll < 0.91 ? 1 : 2
-        const colorPick =
-          tier === 0
-            ? starPalette[Math.random() < 0.78 ? 0 : 2]
-            : starPalette[Math.floor(Math.random() * starPalette.length)]
-
-        const radius =
-          tier === 0
-            ? 0.45 + Math.random() * 0.65
-            : tier === 1
-              ? 0.95 + Math.random() * 0.8
-              : 1.65 + Math.random() * 0.95
-
-        const baseAlpha =
-          tier === 0
-            ? 0.24 + Math.random() * 0.36
-            : tier === 1
-              ? 0.46 + Math.random() * 0.4
-              : 0.74 + Math.random() * 0.24
-
-        nextStars.push({
-          x: Math.random() * width,
-          y: Math.random() * height,
-          radius,
-          baseAlpha,
-          tier,
-          color: colorPick,
-          twinkleSpeed: 0.0007 + Math.random() * 0.0018,
-          twinklePhase: Math.random() * Math.PI * 2,
-          driftX:
-            (Math.random() - 0.5) *
-            (tier === 0 ? 0.025 : tier === 1 ? 0.055 : 0.095),
-          driftY:
-            (Math.random() - 0.5) *
-            (tier === 0 ? 0.02 : tier === 1 ? 0.045 : 0.075),
-          parallax: tier === 0 ? 0.028 : tier === 1 ? 0.072 : 0.135,
-          hasSpikes: tier === 2 && Math.random() < 0.55,
-        })
-      }
-
-      stars = nextStars
-    }
+    // Minimalist astrometry reference crosshairs (no twinkling star speckles)
+    const referenceCrosshairs = [
+      { xRatio: 0.12, yRatio: 0.18, parallax: 0.04, size: 3.5 },
+      { xRatio: 0.28, yRatio: 0.64, parallax: 0.07, size: 3 },
+      { xRatio: 0.08, yRatio: 0.82, parallax: 0.05, size: 3.5 },
+      { xRatio: 0.46, yRatio: 0.14, parallax: 0.06, size: 3 },
+      { xRatio: 0.88, yRatio: 0.22, parallax: 0.08, size: 4 },
+      { xRatio: 0.62, yRatio: 0.78, parallax: 0.05, size: 3.5 },
+      { xRatio: 0.84, yRatio: 0.86, parallax: 0.06, size: 3 },
+      { xRatio: 0.36, yRatio: 0.42, parallax: 0.04, size: 3 },
+    ]
 
     const resizeCanvas = () => {
       width = window.innerWidth
@@ -1984,188 +2141,363 @@ function SpaceBackground() {
       canvas.width = Math.round(width * dpr)
       canvas.height = Math.round(height * dpr)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      buildStars()
     }
 
-    const spawnShootingStar = (now) => {
-      const startX = Math.random() * width * 0.85
-      const startY = Math.random() * height * 0.42
-      const angle = (Math.PI / 180) * (22 + Math.random() * 24)
-      const speed = 11 + Math.random() * 7
-      const length = 95 + Math.random() * 75
+    // Helper: compute 2D point on a rotated ellipse
+    const getOrbitPoint = (cx, cy, rx, ry, tilt, theta) => {
+      const cosT = Math.cos(tilt)
+      const sinT = Math.sin(tilt)
+      const lx = rx * Math.cos(theta)
+      const ly = ry * Math.sin(theta)
+      return {
+        x: cx + lx * cosT - ly * sinT,
+        y: cy + lx * sinT + ly * cosT,
+      }
+    }
 
-      shootingStars.push({
-        x: startX,
-        y: startY,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        length,
-        life: 0,
-        maxLife: 34 + Math.floor(Math.random() * 20),
-        bornAt: now,
-      })
+    // Helper: gravitational spacetime displacement for geodesic mesh
+    const displaceGeodesicPoint = (gx, gy, wellX, wellY, wellRadius) => {
+      let dx = gx - wellX
+      let dy = gy - wellY
+      let distSq = dx * dx + dy * dy
+      const softSq = wellRadius * wellRadius * 0.85
+      const pull = (wellRadius * 26) / Math.sqrt(distSq + softSq)
+      const dist = Math.sqrt(distSq) || 1
+      let outX = gx - (dx / dist) * pull
+      let outY = gy - (dy / dist) * pull
+
+      if (pointer.active) {
+        const pdx = outX - pointer.x
+        const pdy = outY - pointer.y
+        const pDistSq = pdx * pdx + pdy * pdy
+        const lensRadius = 210
+        if (pDistSq < lensRadius * lensRadius) {
+          const pDist = Math.sqrt(pDistSq) || 1
+          const factor = Math.pow(1 - pDist / lensRadius, 2) * 18
+          outX -= (pdx / pDist) * factor
+          outY -= (pdy / pDist) * factor
+        }
+      }
+
+      return { x: outX, y: outY }
     }
 
     const drawScene = (now) => {
       ctx.clearRect(0, 0, width, height)
 
-      if (!prefersReducedMotion) {
-        if (pointer.active) {
-          pointer.x += (pointer.targetX - pointer.x) * 0.08
-          pointer.y += (pointer.targetY - pointer.y) * 0.08
-        }
+      if (!prefersReducedMotion && pointer.active) {
+        pointer.x += (pointer.targetX - pointer.x) * 0.08
+        pointer.y += (pointer.targetY - pointer.y) * 0.08
       }
 
-      const centerOffsetX = pointer.active
-        ? (pointer.x - width * 0.5) * 0.035
+      const maxDim = Math.max(width, height)
+      const minDim = Math.min(width, height)
+
+      // Orbital & gravitational focal center (shifts subtly with scroll & pointer)
+      const pointerShiftX = pointer.active
+        ? (pointer.x - width * 0.5) * 0.025
         : 0
-      const centerOffsetY = pointer.active
-        ? (pointer.y - height * 0.5) * 0.035
+      const pointerShiftY = pointer.active
+        ? (pointer.y - height * 0.5) * 0.025
         : 0
 
-      const nearbyPoints = []
+      const scrollShiftY = ((scrollY * 0.06) % (height * 0.45))
+      const focalX =
+        (width > 768 ? width * 0.68 : width * 0.58) + pointerShiftX
+      const focalY = height * 0.42 - scrollShiftY * 0.35 + pointerShiftY
+      const planetRadius = Math.max(150, minDim * 0.27)
 
-      for (let i = 0; i < stars.length; i += 1) {
-        const star = stars[i]
+      // 1. Warped Spacetime Geodesic Mesh (Gravitational Lensing Field)
+      const gridStepX = width > 768 ? 88 : 68
+      const gridStepY = width > 768 ? 88 : 68
+      const cols = Math.ceil(width / gridStepX) + 2
+      const rows = Math.ceil(height / gridStepY) + 2
+      const scrollGridOffset = (scrollY * 0.08) % gridStepY
 
-        if (!prefersReducedMotion) {
-          star.x = (star.x + star.driftX + width) % width
-          star.y = (star.y + star.driftY + height) % height
-        }
+      ctx.lineWidth = 0.75
+      ctx.strokeStyle = 'rgba(103, 232, 249, 0.028)'
 
-        const parallaxX = centerOffsetX * (star.tier + 1) * 0.45
-        const parallaxY =
-          -scrollY * star.parallax + centerOffsetY * (star.tier + 1) * 0.45
-
-        const drawX = (((star.x + parallaxX) % width) + width) % width
-        const drawY = (((star.y + parallaxY) % height) + height) % height
-
-        const twinkle = prefersReducedMotion
-          ? 1
-          : 0.72 +
-            0.28 * Math.sin(now * star.twinkleSpeed + star.twinklePhase)
-        const alpha = Math.min(1, Math.max(0.08, star.baseAlpha * twinkle))
-        const { r, g, b } = star.color
-
-        if (star.tier === 2) {
-          const glowRadius = star.radius * 4.2
-          const glow = ctx.createRadialGradient(
-            drawX,
-            drawY,
-            0,
-            drawX,
-            drawY,
-            glowRadius
+      // Horizontal spacetime contours
+      for (let r = -1; r <= rows; r += 1) {
+        const baseY = r * gridStepY - scrollGridOffset
+        ctx.beginPath()
+        for (let c = -1; c <= cols; c += 1) {
+          const baseX = c * gridStepX
+          const pt = displaceGeodesicPoint(
+            baseX,
+            baseY,
+            focalX,
+            focalY,
+            planetRadius
           )
-          glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${alpha * 0.55})`)
-          glow.addColorStop(0.45, `rgba(103, 232, 249, ${alpha * 0.16})`)
-          glow.addColorStop(1, 'rgba(103, 232, 249, 0)')
-          ctx.fillStyle = glow
-          ctx.beginPath()
-          ctx.arc(drawX, drawY, glowRadius, 0, Math.PI * 2)
-          ctx.fill()
+          if (c === -1) {
+            ctx.moveTo(pt.x, pt.y)
+          } else {
+            ctx.lineTo(pt.x, pt.y)
+          }
+        }
+        ctx.stroke()
+      }
 
-          if (star.hasSpikes) {
-            const spikeLen = star.radius * 5.2
-            ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.36})`
-            ctx.lineWidth = 0.75
+      // Vertical spacetime contours
+      for (let c = -1; c <= cols; c += 1) {
+        const baseX = c * gridStepX
+        ctx.beginPath()
+        for (let r = -1; r <= rows; r += 1) {
+          const baseY = r * gridStepY - scrollGridOffset
+          const pt = displaceGeodesicPoint(
+            baseX,
+            baseY,
+            focalX,
+            focalY,
+            planetRadius
+          )
+          if (r === -1) {
+            ctx.moveTo(pt.x, pt.y)
+          } else {
+            ctx.lineTo(pt.x, pt.y)
+          }
+        }
+        ctx.stroke()
+      }
+
+      // Subtle cursor gravitational lens aura
+      if (pointer.active) {
+        const lensGlow = ctx.createRadialGradient(
+          pointer.x,
+          pointer.y,
+          0,
+          pointer.x,
+          pointer.y,
+          190
+        )
+        lensGlow.addColorStop(0, 'rgba(103, 232, 249, 0.055)')
+        lensGlow.addColorStop(0.5, 'rgba(99, 102, 241, 0.025)')
+        lensGlow.addColorStop(1, 'rgba(103, 232, 249, 0)')
+        ctx.fillStyle = lensGlow
+        ctx.beginPath()
+        ctx.arc(pointer.x, pointer.y, 190, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      // 2. Solar Wind / Magnetosphere Harmonic Flux Ribbons
+      const timeSec = prefersReducedMotion ? 0 : now * 0.00045
+      for (let w = 0; w < 3; w += 1) {
+        const waveGrad = ctx.createLinearGradient(0, 0, width, 0)
+        waveGrad.addColorStop(0, 'rgba(34, 211, 238, 0)')
+        waveGrad.addColorStop(
+          0.3,
+          w === 1 ? 'rgba(167, 139, 250, 0.055)' : 'rgba(103, 232, 249, 0.055)'
+        )
+        waveGrad.addColorStop(
+          0.7,
+          w === 0 ? 'rgba(99, 102, 241, 0.06)' : 'rgba(34, 211, 238, 0.045)'
+        )
+        waveGrad.addColorStop(1, 'rgba(99, 102, 241, 0)')
+
+        ctx.strokeStyle = waveGrad
+        ctx.lineWidth = 1.2
+        ctx.beginPath()
+
+        const baseWaveY =
+          height * (0.26 + w * 0.24) - ((scrollY * (0.04 + w * 0.015)) % (height * 0.35))
+        for (let x = 0; x <= width; x += 28) {
+          const nx = x / width
+          const yOffset =
+            Math.sin(nx * 4.2 + timeSec + w * 1.7) * 38 +
+            Math.cos(nx * 2.3 - timeSec * 0.7 + w) * 22
+          const wy = baseWaveY + yOffset
+          if (x === 0) {
+            ctx.moveTo(x, wy)
+          } else {
+            ctx.lineTo(x, wy)
+          }
+        }
+        ctx.stroke()
+      }
+
+      // 3. Planetary Eclipse Sphere & Sunlit Atmospheric Corona
+      const coronaGrad = ctx.createRadialGradient(
+        focalX - planetRadius * 0.28,
+        focalY - planetRadius * 0.24,
+        planetRadius * 0.65,
+        focalX,
+        focalY,
+        planetRadius * 1.75
+      )
+      coronaGrad.addColorStop(0, 'rgba(34, 211, 238, 0.13)')
+      coronaGrad.addColorStop(0.42, 'rgba(99, 102, 241, 0.065)')
+      coronaGrad.addColorStop(0.75, 'rgba(139, 92, 246, 0.02)')
+      coronaGrad.addColorStop(1, 'rgba(3, 5, 10, 0)')
+
+      ctx.fillStyle = coronaGrad
+      ctx.beginPath()
+      ctx.arc(focalX, focalY, planetRadius * 1.75, 0, Math.PI * 2)
+      ctx.fill()
+
+      // Dark planetary body occluding background grid
+      const planetBodyGrad = ctx.createRadialGradient(
+        focalX - planetRadius * 0.35,
+        focalY - planetRadius * 0.35,
+        planetRadius * 0.08,
+        focalX,
+        focalY,
+        planetRadius
+      )
+      planetBodyGrad.addColorStop(0, 'rgba(12, 20, 38, 0.94)')
+      planetBodyGrad.addColorStop(0.55, 'rgba(5, 8, 18, 0.97)')
+      planetBodyGrad.addColorStop(1, 'rgba(2, 4, 9, 0.99)')
+
+      ctx.fillStyle = planetBodyGrad
+      ctx.beginPath()
+      ctx.arc(focalX, focalY, planetRadius, 0, Math.PI * 2)
+      ctx.fill()
+
+      // Sunlit atmospheric limb crescent along planet rim
+      const limbGrad = ctx.createLinearGradient(
+        focalX - planetRadius,
+        focalY - planetRadius,
+        focalX + planetRadius * 0.85,
+        focalY + planetRadius * 0.85
+      )
+      limbGrad.addColorStop(0, 'rgba(224, 242, 254, 0.62)')
+      limbGrad.addColorStop(0.32, 'rgba(103, 232, 249, 0.42)')
+      limbGrad.addColorStop(0.65, 'rgba(99, 102, 241, 0.16)')
+      limbGrad.addColorStop(1, 'rgba(15, 23, 42, 0.03)')
+
+      ctx.strokeStyle = limbGrad
+      ctx.lineWidth = 1.6
+      ctx.beginPath()
+      ctx.arc(focalX, focalY, planetRadius, 0, Math.PI * 2)
+      ctx.stroke()
+
+      // 4. 3D-Projected Keplerian Orbits & Trailing Telemetry Probes
+      const scrollTiltMod = Math.sin(scrollY * 0.0008) * 0.12
+
+      for (let i = 0; i < orbits.length; i += 1) {
+        const orb = orbits[i]
+        const rx = maxDim * orb.rxFactor
+        const ry = maxDim * orb.ryFactor * (1 + scrollTiltMod)
+        const { r, g, b } = orb.color
+
+        ctx.save()
+        ctx.setLineDash(orb.dash)
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${orb.ringAlpha})`
+        ctx.lineWidth = orb.lineWidth
+        ctx.beginPath()
+        ctx.ellipse(focalX, focalY, rx, ry, orb.tilt, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.restore()
+
+        // Architectural apsis crosshairs at major-axis vertices
+        if (orb.hasApsisTicks) {
+          const apsisAngles = [0, Math.PI]
+          ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.28)`
+          ctx.lineWidth = 0.85
+          for (let a = 0; a < apsisAngles.length; a += 1) {
+            const pt = getOrbitPoint(
+              focalX,
+              focalY,
+              rx,
+              ry,
+              orb.tilt,
+              apsisAngles[a]
+            )
+            const tick = 4
             ctx.beginPath()
-            ctx.moveTo(drawX - spikeLen, drawY)
-            ctx.lineTo(drawX + spikeLen, drawY)
-            ctx.moveTo(drawX, drawY - spikeLen)
-            ctx.lineTo(drawX, drawY + spikeLen)
+            ctx.moveTo(pt.x - tick, pt.y)
+            ctx.lineTo(pt.x + tick, pt.y)
+            ctx.moveTo(pt.x, pt.y - tick)
+            ctx.lineTo(pt.x, pt.y + tick)
             ctx.stroke()
           }
         }
 
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`
-        ctx.beginPath()
-        ctx.arc(drawX, drawY, star.radius, 0, Math.PI * 2)
-        ctx.fill()
-
-        if (pointer.active && star.tier >= 1) {
-          const dx = drawX - pointer.x
-          const dy = drawY - pointer.y
-          const distSq = dx * dx + dy * dy
-          const maxDist = 148
-          if (distSq < maxDist * maxDist) {
-            nearbyPoints.push({
-              x: drawX,
-              y: drawY,
-              dist: Math.sqrt(distSq),
-              maxDist,
-            })
+        // Orbiting nodes with curved plasma telemetry trails
+        for (let s = 0; s < orb.satellites.length; s += 1) {
+          const sat = orb.satellites[s]
+          if (!prefersReducedMotion) {
+            sat.angle = (sat.angle + sat.speed) % (Math.PI * 2)
           }
-        }
-      }
 
-      if (pointer.active && nearbyPoints.length > 0) {
-        for (let i = 0; i < nearbyPoints.length; i += 1) {
-          const pt = nearbyPoints[i]
-          const strength = (1 - pt.dist / pt.maxDist) * 0.24
-          ctx.strokeStyle = `rgba(103, 232, 249, ${strength})`
-          ctx.lineWidth = 0.75
-          ctx.beginPath()
-          ctx.moveTo(pointer.x, pointer.y)
-          ctx.lineTo(pt.x, pt.y)
-          ctx.stroke()
-        }
-      }
+          const direction = sat.speed >= 0 ? 1 : -1
+          const segments = 18
+          const stepArc = (sat.trailArc / segments) * direction
 
-      if (!prefersReducedMotion) {
-        if (now >= nextShootingStarAt && shootingStars.length < 2) {
-          spawnShootingStar(now)
-          nextShootingStarAt = now + 3800 + Math.random() * 4400
-        }
+          for (let seg = 0; seg < segments; seg += 1) {
+            const t0 = sat.angle - seg * stepArc
+            const t1 = sat.angle - (seg + 1) * stepArc
+            const p0 = getOrbitPoint(focalX, focalY, rx, ry, orb.tilt, t0)
+            const p1 = getOrbitPoint(focalX, focalY, rx, ry, orb.tilt, t1)
+            const ratio = 1 - seg / segments
 
-        for (let i = shootingStars.length - 1; i >= 0; i -= 1) {
-          const meteor = shootingStars[i]
-          meteor.x += meteor.vx
-          meteor.y += meteor.vy
-          meteor.life += 1
+            ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${ratio * 0.58})`
+            ctx.lineWidth = Math.max(0.5, sat.size * 0.85 * ratio)
+            ctx.lineCap = 'round'
+            ctx.beginPath()
+            ctx.moveTo(p0.x, p0.y)
+            ctx.lineTo(p1.x, p1.y)
+            ctx.stroke()
+          }
 
-          const progress = meteor.life / meteor.maxLife
-          const fade =
-            progress < 0.2
-              ? progress / 0.2
-              : Math.max(0, 1 - (progress - 0.2) / 0.8)
-
-          const speedMag = Math.hypot(meteor.vx, meteor.vy) || 1
-          const tailX = meteor.x - (meteor.vx / speedMag) * meteor.length
-          const tailY = meteor.y - (meteor.vy / speedMag) * meteor.length
-
-          const grad = ctx.createLinearGradient(
-            meteor.x,
-            meteor.y,
-            tailX,
-            tailY
+          const head = getOrbitPoint(
+            focalX,
+            focalY,
+            rx,
+            ry,
+            orb.tilt,
+            sat.angle
           )
-          grad.addColorStop(0, `rgba(248, 250, 252, ${0.92 * fade})`)
-          grad.addColorStop(0.28, `rgba(103, 232, 249, ${0.58 * fade})`)
-          grad.addColorStop(0.7, `rgba(167, 139, 250, ${0.2 * fade})`)
-          grad.addColorStop(1, 'rgba(103, 232, 249, 0)')
 
-          ctx.strokeStyle = grad
-          ctx.lineWidth = 1.6
-          ctx.lineCap = 'round'
+          // Soft probe halo
+          const halo = ctx.createRadialGradient(
+            head.x,
+            head.y,
+            0,
+            head.x,
+            head.y,
+            sat.size * 5
+          )
+          halo.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.55)`)
+          halo.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`)
+          ctx.fillStyle = halo
           ctx.beginPath()
-          ctx.moveTo(meteor.x, meteor.y)
-          ctx.lineTo(tailX, tailY)
-          ctx.stroke()
-
-          ctx.fillStyle = `rgba(255, 255, 255, ${0.95 * fade})`
-          ctx.beginPath()
-          ctx.arc(meteor.x, meteor.y, 1.7, 0, Math.PI * 2)
+          ctx.arc(head.x, head.y, sat.size * 5, 0, Math.PI * 2)
           ctx.fill()
 
-          if (
-            meteor.life >= meteor.maxLife ||
-            meteor.x > width + 150 ||
-            meteor.y > height + 150
-          ) {
-            shootingStars.splice(i, 1)
+          // Crisp probe core
+          ctx.fillStyle = '#f8fafc'
+          ctx.beginPath()
+          ctx.arc(head.x, head.y, sat.size, 0, Math.PI * 2)
+          ctx.fill()
+
+          // Optional telemetry target ring around primary orbital node
+          if (sat.hasTargetRing) {
+            ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.34)`
+            ctx.lineWidth = 0.85
+            ctx.beginPath()
+            ctx.arc(head.x, head.y, sat.size + 5.5, 0, Math.PI * 2)
+            ctx.stroke()
           }
         }
+      }
+
+      // 5. Minimalist Astrometry Reference Crosshairs
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)'
+      ctx.lineWidth = 0.8
+      for (let i = 0; i < referenceCrosshairs.length; i += 1) {
+        const ref = referenceCrosshairs[i]
+        const rx = ref.xRatio * width
+        const ry =
+          (((ref.yRatio * height - scrollY * ref.parallax) % height) + height) %
+          height
+        const sz = ref.size
+        ctx.beginPath()
+        ctx.moveTo(rx - sz, ry)
+        ctx.lineTo(rx + sz, ry)
+        ctx.moveTo(rx, ry - sz)
+        ctx.lineTo(rx, ry + sz)
+        ctx.stroke()
       }
     }
 
@@ -2213,7 +2545,6 @@ function SpaceBackground() {
         animationFrameId = null
       }
       if (prefersReducedMotion) {
-        shootingStars = []
         drawScene(performance.now())
       } else {
         animationFrameId = window.requestAnimationFrame(tick)
@@ -3381,12 +3712,6 @@ Hero text rendering
     className="hero-section"
     ref={heroSectionRef}
   >
-    <div className="hero-cosmos" aria-hidden="true">
-      <div className="hero-orbit-ring ring-1" />
-      <div className="hero-orbit-ring ring-2" />
-      <div className="hero-orbit-ring ring-3" />
-    </div>
-
     <p className="eyebrow">
       SOFTWARE ENGINEER • FOUNDER • BUILDER • QA TESTER
     </p>
