@@ -2,12 +2,32 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import './App.css'
 
-// Any project entry with a liveUrl (or url) automatically renders a live
-// site preview below its title and a live project link action.
+// Keep entries ordered latest-to-oldest (newest at top, or specify an ISO
+// `date` such as '2026-11-14'). `sortProjectsByStatusAndTimeline` always places
+// LIVE projects first, sorts latest-to-oldest within each status group, and
+// assigns `01..NN` numbers automatically. Any project with a `liveUrl` (or
+// `url`) also renders an inline site preview and live link action.
 const PROJECTS = [
   {
-    id: 'fixroomaun',
+    id: 'silachomka',
     number: '01',
+    status: 'LIVE',
+    isLive: true,
+    logo: {
+      src: '/assets/silachomka-logo.png',
+      alt: 'silachomka logo',
+    },
+    title: 'silachomka',
+    description:
+      'Official artist platform and creative web experience engineered for music releases, an interactive beat store, visual archive, and sonic catalog under chomkaMUSIC™.',
+    tags: ['JavaScript', 'React', 'Beat Store', 'Vercel'],
+    liveUrl: 'https://silachomka.vercel.app',
+    liveLabel: 'VIEW LIVE PROJECT',
+    liveAriaLabel: 'Open silachomka live project',
+  },
+  {
+    id: 'fixroomaun',
+    number: '02',
     status: 'LIVE',
     isLive: true,
     logo: {
@@ -24,7 +44,7 @@ const PROJECTS = [
   },
   {
     id: 'orbit',
-    number: '02',
+    number: '03',
     status: 'IN DEVELOPMENT',
     isLive: false,
     logo: null,
@@ -36,7 +56,7 @@ const PROJECTS = [
   },
   {
     id: 'studio',
-    number: '03',
+    number: '04',
     status: 'IN DEVELOPMENT',
     isLive: false,
     logo: {
@@ -49,41 +69,69 @@ const PROJECTS = [
     tags: ['Flutter', 'Supabase', 'Audio'],
     developmentNote: 'Product development in progress.',
   },
-  {
-    id: 'silachomka',
-    number: '04',
-    status: 'LIVE',
-    isLive: true,
-    logo: {
-      src: '/assets/silachomka-logo.png',
-      alt: 'silachomka logo',
-    },
-    title: 'silachomka',
-    description:
-      'Official artist platform and creative web experience engineered for music releases, an interactive beat store, visual archive, and sonic catalog under chomkaMUSIC™.',
-    tags: ['JavaScript', 'React', 'Beat Store', 'Vercel'],
-    liveUrl: 'https://silachomka.vercel.app',
-    liveLabel: 'VIEW LIVE PROJECT',
-    liveAriaLabel: 'Open silachomka live project',
-  },
 ]
 
-// Status decides position: live projects come first, in-development ones
-// follow. The sort is stable, so entries keep their authored order within
-// each status group, and the displayed numbers always follow the final order.
-const isProjectLive = (project) =>
-  Boolean(project.isLive ?? (project.liveUrl || project.url))
+const isProjectLive = (project) => {
+  if (typeof project.isLive === 'boolean') {
+    return project.isLive
+  }
+  if (typeof project.status === 'string' && project.status.trim()) {
+    return project.status.trim().toUpperCase() === 'LIVE'
+  }
+  return Boolean(project.liveUrl || project.url)
+}
 
-const SORTED_PROJECTS = PROJECTS.map((project, index) => ({ project, index }))
-  .sort(
-    (a, b) =>
-      Number(!isProjectLive(a.project)) - Number(!isProjectLive(b.project)) ||
-      a.index - b.index
-  )
-  .map(({ project }, position) => ({
-    ...project,
-    number: String(position + 1).padStart(2, '0'),
-  }))
+function getProjectStatusRank(project) {
+  return isProjectLive(project) ? 0 : 1
+}
+
+function parseProjectTimestamp(project) {
+  const rawDate =
+    project.date ?? project.releasedAt ?? project.timeline ?? project.createdAt
+  if (typeof rawDate === 'number' && Number.isFinite(rawDate)) {
+    return rawDate
+  }
+  if (typeof rawDate === 'string' && rawDate.trim()) {
+    const parsed = Date.parse(rawDate.trim())
+    if (!Number.isNaN(parsed)) {
+      return parsed
+    }
+  }
+  return null
+}
+
+/** Sort projects with LIVE first and latest-to-oldest within each status. */
+function sortProjectsByStatusAndTimeline(projects) {
+  return projects
+    .map((project, index) => ({
+      project,
+      index,
+      statusRank: getProjectStatusRank(project),
+      timestamp: parseProjectTimestamp(project),
+    }))
+    .sort((a, b) => {
+      if (a.statusRank !== b.statusRank) {
+        return a.statusRank - b.statusRank
+      }
+
+      const aHasDate = a.timestamp !== null
+      const bHasDate = b.timestamp !== null
+      if (aHasDate !== bHasDate) {
+        return aHasDate ? -1 : 1
+      }
+      if (aHasDate && bHasDate && a.timestamp !== b.timestamp) {
+        return b.timestamp - a.timestamp
+      }
+
+      return a.index - b.index
+    })
+    .map(({ project }, position) => ({
+      ...project,
+      number: String(position + 1).padStart(2, '0'),
+    }))
+}
+
+const SORTED_PROJECTS = sortProjectsByStatusAndTimeline(PROJECTS)
 
 function getPreviewHostname(url) {
   try {
@@ -534,7 +582,7 @@ function ProjectsGrid({ projects, isPreviewModalOpen, onOpenPreview }) {
     <div ref={gridRef} className="projects-grid">
       {projects.map((project) => {
         const liveUrl = project.liveUrl || project.url || null
-        const isLive = Boolean(project.isLive ?? liveUrl)
+        const isLive = isProjectLive(project)
 
         return (
           <article key={project.id} className="project-card">
