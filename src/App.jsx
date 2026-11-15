@@ -1,5 +1,265 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import './App.css'
+
+// Any project entry with a liveUrl (or url) automatically renders a live
+// site preview below its title and a live project link action.
+const PROJECTS = [
+  {
+    id: 'fixroomaun',
+    number: '01',
+    status: 'LIVE',
+    isLive: true,
+    logo: {
+      src: '/assets/fixroomaun-logo.png',
+      alt: 'FixRoomAUN logo',
+    },
+    title: 'FixRoomAUN',
+    description:
+      'A smart campus maintenance platform designed to improve how students report maintenance issues and how staff manage, track, and resolve them.',
+    tags: ['JavaScript', 'Supabase', 'Netlify'],
+    liveUrl: 'https://fixroom-aun.netlify.app',
+    liveLabel: 'VIEW LIVE PROJECT',
+    liveAriaLabel: 'Open FixRoomAUN live project',
+  },
+  {
+    id: 'orbit',
+    number: '02',
+    status: 'IN DEVELOPMENT',
+    isLive: false,
+    logo: null,
+    title: 'Orbit',
+    description:
+      'A software product being developed as part of the chomkaTECH™ ecosystem, focused on delivering a practical, polished, and thoughtfully engineered web experience.',
+    tags: ['JavaScript', 'Web Development', 'Product Development'],
+    developmentNote: 'Product development in progress.',
+  },
+  {
+    id: 'studio',
+    number: '03',
+    status: 'IN DEVELOPMENT',
+    isLive: false,
+    logo: {
+      src: '/assets/studio-logo.png',
+      alt: 'Studio logo',
+    },
+    title: 'Studio',
+    description:
+      'A cross-platform creative workspace being developed by chomkaTECH™ for musicians, producers, and vocalists to capture, organize, edit, and manage their creative work.',
+    tags: ['Flutter', 'Supabase', 'Audio'],
+    developmentNote: 'Product development in progress.',
+  },
+]
+
+function getPreviewHostname(url) {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
+}
+
+/* =========================================================
+   Project Site Preview
+   ========================================================= */
+
+function ProjectSitePreview({ title, url, isPaused = false, onExpand }) {
+  const [loadedUrl, setLoadedUrl] = useState(null)
+  const isLoaded = !isPaused && loadedUrl === url
+  const hostname = getPreviewHostname(url)
+
+  const handleExpand = (event) => {
+    onExpand(event.currentTarget)
+  }
+
+  return (
+    <div className="project-preview">
+      <div className="project-preview-bar">
+        <div className="project-preview-meta">
+          <div className="project-preview-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <span className="project-preview-url" title={url}>
+            {hostname}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          className="project-preview-expand"
+          onClick={handleExpand}
+          aria-label={`Expand live site preview for ${title}`}
+        >
+          <span>Expand</span>
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 12 12"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M7.5 1.5H10.5V4.5M4.5 10.5H1.5V7.5M10.5 1.5L6.75 5.25M1.5 10.5L5.25 6.75"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
+
+      <div className="project-preview-viewport">
+        {!isPaused && !isLoaded && (
+          <div className="project-preview-loading" aria-hidden="true">
+            Loading live preview...
+          </div>
+        )}
+
+        <div className="project-preview-frame">
+          {!isPaused && (
+            <iframe
+              src={url}
+              title={`${title} site preview`}
+              loading="eager"
+              scrolling="no"
+              tabIndex={-1}
+              aria-hidden="true"
+              onLoad={() => setLoadedUrl(url)}
+              className={`project-preview-iframe${isLoaded ? ' is-loaded' : ''}`}
+            />
+          )}
+        </div>
+
+        <button
+          type="button"
+          className="project-preview-trigger"
+          onClick={handleExpand}
+          aria-label={`Open interactive preview of ${title}`}
+        >
+          <span className="project-preview-hint">
+            Interactive preview ⤢
+          </span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ProjectPreviewModal({ project, onClose }) {
+  const [viewportMode, setViewportMode] = useState('desktop')
+  const [loadedId, setLoadedId] = useState(null)
+  const closeButtonRef = useRef(null)
+  const isLoaded = loadedId === project.id
+  const hostname = getPreviewHostname(project.liveUrl)
+
+  useEffect(() => {
+    closeButtonRef.current?.focus()
+  }, [])
+
+  const modalContent = (
+    <div
+      className="project-modal-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose()
+        }
+      }}
+    >
+      <div
+        className="project-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-modal-title"
+      >
+        <div className="project-modal-header">
+          <div className="project-modal-title-group">
+            {project.isLive && (
+              <span className="project-modal-live-pill">LIVE</span>
+            )}
+            <h3 id="project-modal-title">{project.title}</h3>
+            <span className="project-modal-url" title={project.liveUrl}>
+              {hostname}
+            </span>
+          </div>
+
+          <div className="project-modal-actions">
+            <div
+              className="project-modal-viewport-toggle"
+              role="group"
+              aria-label="Preview viewport size"
+            >
+              <button
+                type="button"
+                className={viewportMode === 'desktop' ? 'active' : ''}
+                aria-pressed={viewportMode === 'desktop'}
+                onClick={() => setViewportMode('desktop')}
+              >
+                Desktop
+              </button>
+              <button
+                type="button"
+                className={viewportMode === 'mobile' ? 'active' : ''}
+                aria-pressed={viewportMode === 'mobile'}
+                onClick={() => setViewportMode('mobile')}
+              >
+                Mobile
+              </button>
+            </div>
+
+            <a
+              href={project.liveUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="project-modal-open-link"
+            >
+              <span>Open site</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+
+            <button
+              ref={closeButtonRef}
+              type="button"
+              className="project-modal-close"
+              onClick={onClose}
+              aria-label="Close site preview"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <div
+          className={`project-modal-body${viewportMode === 'mobile' ? ' is-mobile' : ''}`}
+        >
+          <div
+            className={`project-modal-stage${viewportMode === 'mobile' ? ' is-mobile' : ''}`}
+          >
+            {!isLoaded && (
+              <div className="project-preview-loading" aria-hidden="true">
+                Loading interactive preview...
+              </div>
+            )}
+            <iframe
+              src={project.liveUrl}
+              title={`${project.title} interactive site preview`}
+              onLoad={() => setLoadedId(project.id)}
+              className={`project-modal-iframe${isLoaded ? ' is-loaded' : ''}`}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
+  if (typeof document === 'undefined') {
+    return modalContent
+  }
+
+  return createPortal(modalContent, document.body)
+}
 
 const trainingMedia = [
   {
@@ -1397,6 +1657,7 @@ Navigation state
 =========================
    */
   const [isNavOpen, setIsNavOpen] = useState(false)
+  const [expandedProject, setExpandedProject] = useState(null)
   /*
 =========================
 Hero typewriter state
@@ -1414,6 +1675,7 @@ Refs
    */
   const typewriterTimerRef = useRef(null)
   const heroSectionRef = useRef(null)
+  const previewReturnFocusRef = useRef(null)
   /*
 =========================
 Cleanup helpers
@@ -1427,13 +1689,29 @@ Cleanup helpers
       typewriterTimerRef.current = null
     }
   }
+
+  const handleOpenPreview = useCallback((project, triggerElement) => {
+    previewReturnFocusRef.current = triggerElement || null
+    setExpandedProject(project)
+  }, [])
+
+  const handleClosePreview = useCallback(() => {
+    setExpandedProject(null)
+    const triggerEl = previewReturnFocusRef.current
+    previewReturnFocusRef.current = null
+    if (triggerEl && typeof triggerEl.focus === 'function') {
+      requestAnimationFrame(() => {
+        triggerEl.focus()
+      })
+    }
+  }, [])
   /*
 =========================
-Mobile navigation effect
+Mobile navigation & modal effect
 =========================
    */
   useEffect(() => {
-    if (isNavOpen) {
+    if (isNavOpen || expandedProject) {
       document.body.style.overflow = 'hidden'
     } else {
       document.body.style.overflow = ''
@@ -1441,7 +1719,11 @@ Mobile navigation effect
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
-        setIsNavOpen(false)
+        if (expandedProject) {
+          handleClosePreview()
+        } else {
+          setIsNavOpen(false)
+        }
       }
     }
 
@@ -1459,7 +1741,7 @@ Mobile navigation effect
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('resize', handleResize)
     }
-  }, [isNavOpen])
+  }, [isNavOpen, expandedProject, handleClosePreview])
   /*
 =========================
 Hero typewriter
@@ -2553,165 +2835,95 @@ Hero text rendering
     </h2>
 
     <div className="projects-grid">
-      {/* FixRoomAUN */}
+      {PROJECTS.map((project) => {
+        const liveUrl = project.liveUrl || project.url || null
+        const isLive = Boolean(project.isLive ?? liveUrl)
 
-      <article className="project-card">
-        <div className="project-top">
-          <p className="project-number">
-            01
-          </p>
+        return (
+          <article key={project.id} className="project-card">
+            <div className="project-top">
+              <p className="project-number">
+                {project.number}
+              </p>
 
-          <span className="project-status status-live">
-            LIVE
-          </span>
-        </div>
+              <span
+                className={`project-status${isLive ? ' status-live' : ''}`}
+              >
+                {project.status}
+              </span>
+            </div>
 
-        <div className="project-logo">
-          <img
-            src="/assets/fixroomaun-logo.png"
-            alt="FixRoomAUN logo"
-          />
-        </div>
+            {project.logo && (
+              <div className="project-logo">
+                <img
+                  src={project.logo.src}
+                  alt={project.logo.alt}
+                />
+              </div>
+            )}
 
-        <h3>
-          FixRoomAUN
-        </h3>
+            <h3>
+              {project.title}
+            </h3>
 
-        <p>
-          A smart campus maintenance platform
-          designed to improve how students report
-          maintenance issues and how staff manage,
-          track, and resolve them.
-        </p>
+            {liveUrl && (
+              <ProjectSitePreview
+                title={project.title}
+                url={liveUrl}
+                isPaused={Boolean(expandedProject)}
+                onExpand={(triggerEl) =>
+                  handleOpenPreview(
+                    { ...project, liveUrl, isLive },
+                    triggerEl
+                  )
+                }
+              />
+            )}
 
-        <div className="project-tags">
-          <span>
-            JavaScript
-          </span>
+            <p>
+              {project.description}
+            </p>
 
-          <span>
-            Supabase
-          </span>
+            <div className="project-tags">
+              {project.tags.map((tag) => (
+                <span key={tag}>
+                  {tag}
+                </span>
+              ))}
+            </div>
 
-          <span>
-            Netlify
-          </span>
-        </div>
+            {liveUrl ? (
+              <a
+                href={liveUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="fixroom-live-link"
+                aria-label={
+                  project.liveAriaLabel ||
+                  `Open ${project.title} live project`
+                }
+              >
+                <span>
+                  {project.liveLabel || 'VIEW LIVE PROJECT'}
+                </span>
 
-        <a
-          href="https://fixroom-aun.netlify.app"
-          target="_blank"
-          rel="noreferrer"
-          className="fixroom-live-link"
-          aria-label="Open FixRoomAUN live project"
-        >
-          <span>
-            VIEW LIVE PROJECT
-          </span>
-
-          <span
-            className="fixroom-live-arrow"
-            aria-hidden="true"
-          >
-            ↗
-          </span>
-        </a>
-      </article>
-
-      {/* Orbit */}
-
-      <article className="project-card">
-        <div className="project-top">
-          <p className="project-number">
-            02
-          </p>
-
-          <span className="project-status">
-            IN DEVELOPMENT
-          </span>
-        </div>
-
-        <h3>
-          Orbit
-        </h3>
-
-        <p>
-          A software product being developed as
-          part of the chomkaTECH™ ecosystem,
-          focused on delivering a practical,
-          polished, and thoughtfully engineered
-          web experience.
-        </p>
-
-        <div className="project-tags">
-          <span>
-            JavaScript
-          </span>
-
-          <span>
-            Web Development
-          </span>
-
-          <span>
-            Product Development
-          </span>
-        </div>
-
-        <p className="project-development-note">
-          Product development in progress.
-        </p>
-      </article>
-
-      {/* Studio */}
-
-      <article className="project-card">
-        <div className="project-top">
-          <p className="project-number">
-            03
-          </p>
-
-          <span className="project-status">
-            IN DEVELOPMENT
-          </span>
-        </div>
-
-        <div className="project-logo">
-          <img
-            src="/assets/studio-logo.png"
-            alt="Studio logo"
-          />
-        </div>
-
-        <h3>
-          Studio
-        </h3>
-
-        <p>
-          A cross-platform creative workspace
-          being developed by chomkaTECH™ for
-          musicians, producers, and vocalists to
-          capture, organize, edit, and manage their
-          creative work.
-        </p>
-
-        <div className="project-tags">
-          <span>
-            Flutter
-          </span>
-
-          <span>
-            Supabase
-          </span>
-
-          <span>
-            Audio
-          </span>
-        </div>
-
-        <p className="project-development-note">
-          Product development in progress.
-        </p>
-      </article>
+                <span
+                  className="fixroom-live-arrow"
+                  aria-hidden="true"
+                >
+                  ↗
+                </span>
+              </a>
+            ) : (
+              project.developmentNote && (
+                <p className="project-development-note">
+                  {project.developmentNote}
+                </p>
+              )
+            )}
+          </article>
+        )
+      })}
     </div>
   </section>
 
@@ -3158,6 +3370,14 @@ Hero text rendering
       Built by chomkaTECH™
     </p>
   </footer>
+
+  {expandedProject && (
+    <ProjectPreviewModal
+      key={expandedProject.id}
+      project={expandedProject}
+      onClose={handleClosePreview}
+    />
+  )}
 </main>
   )
 }
