@@ -2,6 +2,13 @@
   "name": "samueljohnibro-portfolio",
   "private": true,
   "version": "0.0.0",
+  "description": "Personal software engineering portfolio and Cloudflare Workers + D1 CMS platform for Samuel Silachomka John-Ibro (chomkaTECH™).",
+  "homepage": "https://sji.sjip.workers.dev/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samueljohnibro/SamuelJohnIbro-Portfolio.git"
+  },
+  "author": "Samuel Silachomka John-Ibro",
   "type": "module",
   "scripts": {
     "dev": "vite",
