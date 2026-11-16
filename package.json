@@ -5,9 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:worker": "vite build && wrangler dev",
     "build": "vite build",
+    "deploy": "vite build && wrangler deploy",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "admin:password": "node scripts/set-admin-password.mjs secret",
+    "admin:hash": "node scripts/set-admin-password.mjs hash-only",
+    "admin:dev-secret": "node scripts/set-admin-password.mjs dev"
   },
   "dependencies": {
     "react": "^19.2.8",
@@ -22,6 +27,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.7.0",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "wrangler": "^4.162.0"
   }
 }
