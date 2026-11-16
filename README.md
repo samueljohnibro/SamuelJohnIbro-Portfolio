@@ -19,7 +19,7 @@ When the D1 API is unreachable (such as standalone `vite` preview without a Work
 
 ### Public portfolio experience
 
-- **Interactive orbital background** — HTML5 Canvas animation (`SpaceBackground`) rendering an orbital eclipse horizon, 3D Keplerian satellite trajectories, and a spacetime geodesic mesh, with automatic respect for `prefers-reduced-motion`.
+- **Interactive orbital background** — Responsive, frame-rate-independent HTML5 Canvas animation (`SpaceBackground`) rendering an orbital eclipse horizon, 3D Keplerian satellite trajectories, ambient drifting star-motes, and a spacetime geodesic mesh, paired with a pure-CSS orbital fallback so ambient motion works across viewports, browser privacy protections, and system animation settings.
 - **Dynamic hero & SEO synchronization** — Intersection-driven typewriter headline with accent highlighting (`resolveHeadlineParts`) and dynamic document title/meta description updates.
 - **Smart projects masonry grid** — Projects sorted automatically (`LIVE` first, then newest to oldest within each status) into a balanced shortest-column masonry layout (`ProjectsGrid`) with inline interactive site previews and an accessible fullscreen modal (`ProjectPreview`).
 - **Training media carousel** — Mixed-media showcase (`TrainingCarousel`) supporting images, auto-timed short video clips, and embedded YouTube/Vimeo presentations, alongside structured training role/focus notes.

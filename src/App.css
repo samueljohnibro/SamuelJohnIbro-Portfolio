@@ -145,6 +145,7 @@ main {
   inset: 0;
   width: 100%;
   height: 100%;
+  min-height: 100dvh;
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
@@ -156,8 +157,7 @@ main {
   position: absolute;
   inset: -15%;
   pointer-events: none;
-  filter: blur(68px);
-  opacity: 0.85;
+  opacity: 0.92;
   will-change: transform;
 }
 
@@ -165,74 +165,78 @@ main {
   position: absolute;
   border-radius: 50%;
   pointer-events: none;
+  will-change: transform;
 }
 
 .space-nebula-cyan {
-  width: 680px;
-  height: 680px;
+  width: clamp(320px, 52vmax, 760px);
+  height: clamp(320px, 52vmax, 760px);
   top: 2%;
-  left: 52%;
+  left: 50%;
   background: radial-gradient(
     circle,
-    rgba(212, 212, 212, 0.12) 0%,
-    rgba(163, 163, 163, 0.055) 42%,
-    transparent 72%
+    rgba(218, 218, 218, 0.1) 0%,
+    rgba(176, 176, 176, 0.06) 28%,
+    rgba(140, 140, 140, 0.025) 52%,
+    transparent 74%
   );
-  animation: nebulaDriftOne 26s ease-in-out infinite alternate;
+  animation: nebulaDriftOne 18s ease-in-out infinite alternate;
 }
 
 .space-nebula-violet {
-  width: 760px;
-  height: 620px;
-  top: 32%;
-  left: -8%;
+  width: clamp(340px, 58vmax, 840px);
+  height: clamp(300px, 48vmax, 700px);
+  top: 30%;
+  left: -10%;
   background: radial-gradient(
     circle,
-    rgba(163, 163, 163, 0.1) 0%,
-    rgba(115, 115, 115, 0.05) 45%,
-    transparent 74%
+    rgba(172, 172, 172, 0.085) 0%,
+    rgba(130, 130, 130, 0.048) 32%,
+    rgba(100, 100, 100, 0.018) 56%,
+    transparent 76%
   );
-  animation: nebulaDriftTwo 32s ease-in-out infinite alternate;
+  animation: nebulaDriftTwo 23s ease-in-out infinite alternate;
 }
 
 .space-nebula-indigo {
-  width: 720px;
-  height: 720px;
-  bottom: -6%;
-  right: -6%;
+  width: clamp(320px, 54vmax, 780px);
+  height: clamp(320px, 54vmax, 780px);
+  bottom: -8%;
+  right: -8%;
   background: radial-gradient(
     circle,
-    rgba(180, 180, 180, 0.09) 0%,
-    rgba(115, 115, 115, 0.055) 44%,
-    transparent 74%
+    rgba(188, 188, 188, 0.08) 0%,
+    rgba(135, 135, 135, 0.045) 32%,
+    rgba(95, 95, 95, 0.016) 55%,
+    transparent 76%
   );
-  animation: nebulaDriftThree 29s ease-in-out infinite alternate;
+  animation: nebulaDriftThree 21s ease-in-out infinite alternate;
 }
 
 @keyframes nebulaDriftOne {
   0% {
-    transform: translate3d(-4%, 0%, 0) scale(1);
+    transform: translate3d(-6%, -2%, 0) scale(0.98);
   }
   100% {
-    transform: translate3d(5%, 6%, 0) scale(1.08);
+    transform: translate3d(7%, 8%, 0) scale(1.1);
   }
 }
 
 @keyframes nebulaDriftTwo {
   0% {
-    transform: translate3d(0%, -3%, 0) scale(1);
+    transform: translate3d(-2%, -5%, 0) scale(1);
   }
   100% {
-    transform: translate3d(6%, 5%, 0) scale(1.1);
+    transform: translate3d(8%, 7%, 0) scale(1.12);
   }
 }
 
 @keyframes nebulaDriftThree {
   0% {
-    transform: translate3d(3%, 2%, 0) scale(1);
+    transform: translate3d(5%, 4%, 0) scale(1);
   }
   100% {
-    transform: translate3d(-5%, -6%, 0) scale(1.07);
+    transform: translate3d(-7%, -8%, 0) scale(1.09);
   }
 }
 
@@ -241,12 +245,140 @@ main {
   inset: 0;
   background:
     radial-gradient(
-      circle at 72% 36%,
-      rgba(212, 212, 212, 0.05) 0%,
+      circle at 68% 40%,
+      rgba(212, 212, 212, 0.055) 0%,
       rgba(115, 115, 115, 0.025) 35%,
       transparent 68%
     );
   pointer-events: none;
+}
+
+.space-fallback-orbits {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.space-backdrop[data-canvas-active='true'] .space-fallback-orbits {
+  display: none;
+}
+
+.space-fallback-eclipse {
+  position: absolute;
+  left: 64%;
+  top: 41%;
+  width: clamp(160px, 34vmin, 420px);
+  height: clamp(160px, 34vmin, 420px);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 36% 36%,
+    rgba(32, 32, 32, 0.94) 0%,
+    rgba(12, 12, 12, 0.97) 58%,
+    rgba(6, 6, 6, 0.99) 100%
+  );
+  box-shadow:
+    0 0 60px rgba(212, 212, 212, 0.1),
+    inset 1px 1px 0 rgba(245, 245, 245, 0.32);
+  animation: spaceFallbackPulse 14s ease-in-out infinite alternate;
+}
+
+.space-fallback-plane {
+  position: absolute;
+  left: 64%;
+  top: 41%;
+  pointer-events: none;
+}
+
+.space-fallback-plane-1 {
+  width: clamp(260px, 58vmax, 820px);
+  height: clamp(260px, 58vmax, 820px);
+  transform: translate(-50%, -50%) rotate(-22deg) scaleY(0.35);
+}
+
+.space-fallback-plane-2 {
+  width: clamp(340px, 76vmax, 1080px);
+  height: clamp(340px, 76vmax, 1080px);
+  transform: translate(-50%, -50%) rotate(-14deg) scaleY(0.36);
+}
+
+.space-fallback-plane-3 {
+  width: clamp(220px, 44vmax, 620px);
+  height: clamp(220px, 44vmax, 620px);
+  transform: translate(-50%, -50%) rotate(32deg) scaleY(0.58);
+}
+
+.space-fallback-ring {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 1px solid rgba(212, 212, 212, 0.16);
+}
+
+.space-fallback-ring-1 {
+  animation: spaceFallbackSpin 24s linear infinite;
+}
+
+.space-fallback-ring-2 {
+  border-style: dashed;
+  border-color: rgba(178, 178, 178, 0.14);
+  animation: spaceFallbackSpinReverse 34s linear infinite;
+}
+
+.space-fallback-ring-3 {
+  border-color: rgba(155, 155, 155, 0.15);
+  animation: spaceFallbackSpin 18s linear infinite;
+}
+
+.space-fallback-sat {
+  position: absolute;
+  top: -3.5px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: #f5f5f5;
+  box-shadow:
+    0 0 12px rgba(245, 245, 245, 0.85),
+    0 0 24px rgba(212, 212, 212, 0.45);
+}
+
+@media (max-width: 768px) {
+  .space-fallback-eclipse,
+  .space-fallback-plane {
+    left: 54%;
+    top: 39%;
+  }
+}
+
+@keyframes spaceFallbackPulse {
+  0% {
+    transform: translate(-50%, -50%) scale(0.98);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.03);
+  }
+}
+
+@keyframes spaceFallbackSpin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spaceFallbackSpinReverse {
+  0% {
+    transform: rotate(360deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
 }
 
 .space-canvas {
@@ -3101,7 +3233,7 @@ button:focus:not(:focus-visible) {
     scroll-behavior: auto;
   }
 
-  *:not(.training-media-track):not(.hero-cursor):not(.hero-cursor-complete) {
+  *:not(.training-media-track):not(.hero-cursor):not(.hero-cursor-complete):not(.space-backdrop):not(.space-nebula-layer):not(.space-nebula):not(.space-grid-overlay):not(.space-fallback-orbits):not(.space-fallback-eclipse):not(.space-fallback-plane):not(.space-fallback-ring):not(.space-fallback-sat):not(.space-canvas) {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
