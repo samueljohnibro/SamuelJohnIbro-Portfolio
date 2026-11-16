@@ -13,7 +13,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "sji-portfolio-db"
+      "database_name": "sji-portfolio-db",
+      "database_id": "77085a15-2b39-4602-b9d3-df92fc12bccd"
     }
   ],
   "observability": {
