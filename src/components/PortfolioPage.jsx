@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import {
   DEFAULT_PORTFOLIO,
   normalizePortfolioData,
@@ -11,8 +18,154 @@ import { SpaceBackground } from './SpaceBackground.jsx'
 import { TrainingCarousel } from './TrainingCarousel.jsx'
 
 const TYPEWRITER_SPEED = 55
+const TYPEWRITER_RESTART_DELAY = 7000
 const PORTFOLIO_FONT =
   'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+
+/**
+ * Measure exact visual line-break boundaries and heights for the full headline
+ * inside its live CSS box so words type onto their final line without jumping.
+ */
+function measureHeroLineLayout(measureEl, fullText) {
+  if (!measureEl || !fullText || typeof window === 'undefined') {
+    return null
+  }
+
+  const totalRect = measureEl.getBoundingClientRect()
+  if (totalRect.width <= 0 || totalRect.height <= 0) {
+    return null
+  }
+
+  const computed = window.getComputedStyle(measureEl)
+  const fontSize = parseFloat(computed.fontSize) || 16
+  const parsedLineHeight = parseFloat(computed.lineHeight)
+  const lineHeightPx = Number.isFinite(parsedLineHeight)
+    ? parsedLineHeight
+    : fontSize * 0.97
+  const lineBreakThreshold = Math.max(8, lineHeightPx * 0.45)
+
+  const walker = document.createTreeWalker(measureEl, NodeFilter.SHOW_TEXT)
+  const textRuns = []
+  let cursor = 0
+  let currentNode = walker.nextNode()
+  while (currentNode) {
+    const len = currentNode.textContent ? currentNode.textContent.length : 0
+    if (len > 0) {
+      textRuns.push({ node: currentNode, start: cursor, end: cursor + len })
+      cursor += len
+    }
+    currentNode = walker.nextNode()
+  }
+
+  if (textRuns.length === 0 || cursor !== fullText.length) {
+    return null
+  }
+
+  const range = document.createRange()
+  const lineStarts = []
+  let currentLineTop = null
+  let runIndex = 0
+
+  for (let i = 0; i < fullText.length; i += 1) {
+    if (/\s/.test(fullText[i])) continue
+
+    while (runIndex < textRuns.length && i >= textRuns[runIndex].end) {
+      runIndex += 1
+    }
+    const run = textRuns[runIndex]
+    if (!run) break
+
+    const localOffset = i - run.start
+    range.setStart(run.node, localOffset)
+    range.setEnd(run.node, localOffset + 1)
+    const rect = range.getBoundingClientRect()
+    if (rect.width === 0 && rect.height === 0) continue
+
+    if (currentLineTop === null) {
+      lineStarts.push(0)
+      currentLineTop = rect.top
+    } else if (rect.top - currentLineTop > lineBreakThreshold) {
+      lineStarts.push(i)
+      currentLineTop = rect.top
+    }
+  }
+
+  if (lineStarts.length === 0) {
+    return null
+  }
+
+  const lines = lineStarts.map((start, idx) => ({
+    start,
+    end: idx + 1 < lineStarts.length ? lineStarts[idx + 1] : fullText.length,
+  }))
+  const perLineHeight = totalRect.height / lines.length
+  const heights = lines.map((_, idx) =>
+    idx + 1 === lines.length ? totalRect.height : perLineHeight * (idx + 1)
+  )
+
+  return { lines, heights }
+}
+
+/**
+ * Extract before/accent/after substrings for a single visual line slice.
+ */
+function sliceLineHeadlineParts(
+  activeText,
+  lineStart,
+  lineEnd,
+  beforeEnd,
+  accentEnd
+) {
+  const clampedEnd = Math.min(activeText.length, lineEnd)
+  if (clampedEnd <= lineStart) {
+    return { before: '', accent: '', after: '' }
+  }
+
+  const sliceRange = (rangeStart, rangeEnd) => {
+    const start = Math.max(lineStart, rangeStart)
+    const end = Math.min(clampedEnd, rangeEnd)
+    return end > start ? activeText.slice(start, end) : ''
+  }
+
+  return {
+    before: sliceRange(0, beforeEnd),
+    accent: sliceRange(beforeEnd, accentEnd),
+    after: sliceRange(accentEnd, clampedEnd),
+  }
+}
+
+function renderHeadlineParts(parts) {
+  return (
+    <>
+      {parts.before && (
+        <span className="hero-primary-text">{parts.before}</span>
+      )}
+      {parts.accent && (
+        <span className="hero-accent-text">{parts.accent}</span>
+      )}
+      {parts.after && (
+        <span className="hero-primary-text">{parts.after}</span>
+      )}
+    </>
+  )
+}
+
+function areHeroLineLayoutsEqual(a, b) {
+  if (a === b) return true
+  if (!a || !b) return false
+  if (a.text !== b.text || a.accent !== b.accent) return false
+  if (a.lines.length !== b.lines.length) return false
+  for (let i = 0; i < a.lines.length; i += 1) {
+    if (
+      a.lines[i].start !== b.lines[i].start ||
+      a.lines[i].end !== b.lines[i].end ||
+      Math.abs(a.heights[i] - b.heights[i]) > 0.25
+    ) {
+      return false
+    }
+  }
+  return true
+}
 
 function isCompactViewport() {
   return (
@@ -49,9 +202,11 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     !('IntersectionObserver' in window) ||
     isCompactViewport()
   const [typedHeroText, setTypedHeroText] = useState('')
+  const [heroLineLayout, setHeroLineLayout] = useState(null)
 
   const typewriterTimerRef = useRef(null)
   const heroSectionRef = useRef(null)
+  const heroMeasureRef = useRef(null)
   const previewReturnFocusRef = useRef(null)
 
   // Fetch live portfolio content from Worker/D1 on mount & listen for cross-tab admin publishes
@@ -179,12 +334,43 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
 
   useEffect(() => {
     const heroElement = heroSectionRef.current
-    if (!heroElement) {
+    if (!heroElement || staticHeroMode || !heroText) {
       return undefined
     }
 
-    if (staticHeroMode) {
-      return undefined
+    let isDisposed = false
+    let isHeroVisible = false
+
+    const startTypingCycle = () => {
+      if (isDisposed || !isHeroVisible) return
+
+      clearTypewriterTimer()
+      setTypedHeroText('')
+
+      let currentIndex = 0
+      const typeNextCharacter = () => {
+        if (isDisposed || !isHeroVisible) return
+
+        currentIndex += 1
+        setTypedHeroText(heroText.slice(0, currentIndex))
+
+        if (currentIndex < heroText.length) {
+          typewriterTimerRef.current = window.setTimeout(
+            typeNextCharacter,
+            TYPEWRITER_SPEED
+          )
+        } else {
+          typewriterTimerRef.current = window.setTimeout(
+            startTypingCycle,
+            TYPEWRITER_RESTART_DELAY
+          )
+        }
+      }
+
+      typewriterTimerRef.current = window.setTimeout(
+        typeNextCharacter,
+        TYPEWRITER_SPEED
+      )
     }
 
     const observer = new IntersectionObserver(
@@ -193,29 +379,11 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
         if (!entry) return
 
         if (entry.isIntersecting) {
-          clearTypewriterTimer()
-          setTypedHeroText('')
-
-          let currentIndex = 0
-          const typeNextCharacter = () => {
-            currentIndex += 1
-            setTypedHeroText(heroText.slice(0, currentIndex))
-
-            if (currentIndex < heroText.length) {
-              typewriterTimerRef.current = window.setTimeout(
-                typeNextCharacter,
-                TYPEWRITER_SPEED
-              )
-            } else {
-              typewriterTimerRef.current = null
-            }
-          }
-
-          typewriterTimerRef.current = window.setTimeout(
-            typeNextCharacter,
-            TYPEWRITER_SPEED
-          )
+          if (isHeroVisible) return
+          isHeroVisible = true
+          startTypingCycle()
         } else {
+          isHeroVisible = false
           clearTypewriterTimer()
           setTypedHeroText('')
         }
@@ -226,6 +394,8 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     observer.observe(heroElement)
 
     return () => {
+      isDisposed = true
+      isHeroVisible = false
       observer.disconnect()
       clearTypewriterTimer()
     }
@@ -236,19 +406,88 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     [heroText, portfolio.hero.accentPhrase]
   )
 
+  useLayoutEffect(() => {
+    const measureEl = heroMeasureRef.current
+    if (staticHeroMode || !measureEl) {
+      return undefined
+    }
+
+    let active = true
+    const updateLineLayout = () => {
+      if (!active) return
+      const measured = measureHeroLineLayout(measureEl, heroText)
+      if (!measured) return
+      const nextLayout = {
+        text: heroText,
+        accent: portfolio.hero.accentPhrase,
+        ...measured,
+      }
+      setHeroLineLayout((prev) =>
+        areHeroLineLayoutsEqual(prev, nextLayout) ? prev : nextLayout
+      )
+    }
+
+    let observer = null
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(updateLineLayout)
+      observer.observe(measureEl)
+    }
+
+    Promise.resolve().then(updateLineLayout)
+
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      document.fonts.ready.then(updateLineLayout).catch(() => {})
+    }
+
+    return () => {
+      active = false
+      observer?.disconnect()
+    }
+  }, [heroText, portfolio.hero.accentPhrase, staticHeroMode])
+
   const activeHeroText = staticHeroMode ? heroText : typedHeroText
   const typedLen = activeHeroText.length
   const beforeEnd = headlineSplit.before.length
   const accentEnd = beforeEnd + headlineSplit.accent.length
 
-  const heroBeforeText = activeHeroText.slice(0, Math.min(typedLen, beforeEnd))
-  const heroAccentText =
-    typedLen > beforeEnd
-      ? activeHeroText.slice(beforeEnd, Math.min(typedLen, accentEnd))
-      : ''
-  const heroAfterText =
-    typedLen > accentEnd ? activeHeroText.slice(accentEnd) : ''
-  const heroPendingText = heroText.slice(typedLen)
+  const activeLineLayout =
+    !staticHeroMode &&
+    heroLineLayout &&
+    heroLineLayout.text === heroText &&
+    heroLineLayout.accent === portfolio.hero.accentPhrase
+      ? heroLineLayout
+      : null
+
+  let activeLineCount = 1
+  if (activeLineLayout) {
+    for (let i = 1; i < activeLineLayout.lines.length; i += 1) {
+      if (typedLen > activeLineLayout.lines[i].start) {
+        activeLineCount = i + 1
+      } else {
+        break
+      }
+    }
+  }
+
+  const heroHeadingHeight = activeLineLayout
+    ? activeLineLayout.heights[activeLineCount - 1]
+    : null
+  const renderedHeroLines = activeLineLayout
+    ? activeLineLayout.lines
+        .slice(0, activeLineCount)
+        .map((line) =>
+          sliceLineHeadlineParts(
+            activeHeroText,
+            line.start,
+            line.end,
+            beforeEnd,
+            accentEnd
+          )
+        )
+    : null
+  const fallbackHeroParts = !renderedHeroLines
+    ? sliceLineHeadlineParts(activeHeroText, 0, typedLen, beforeEnd, accentEnd)
+    : null
 
   const sortedProjects = useMemo(
     () => sortProjectsByStatusAndTimeline(portfolio.projects),
@@ -342,8 +581,35 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
             font-family: ${PORTFOLIO_FONT} !important;
           }
 
+          .portfolio-app .hero-section h1 {
+            position: relative;
+            width: 100%;
+          }
+
+          .portfolio-app .hero-section h1.hero-headline-animated {
+            transition: height 220ms cubic-bezier(0.22, 1, 0.36, 1);
+          }
+
           .portfolio-app .hero-typewriter {
+            display: block;
             font-family: ${PORTFOLIO_FONT} !important;
+          }
+
+          .portfolio-app .hero-line {
+            display: block;
+            white-space: nowrap;
+          }
+
+          .portfolio-app .hero-measure {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            display: block;
+            visibility: hidden;
+            pointer-events: none;
+            user-select: none;
+            z-index: -1;
           }
 
           .portfolio-app .hero-primary-text {
@@ -358,21 +624,21 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
               0 0 54px rgba(158, 42, 71, 0.14);
           }
 
-          .portfolio-app .hero-pending-text {
-            color: transparent !important;
-            text-shadow: none !important;
-            -webkit-text-fill-color: transparent;
-            user-select: none;
+          .portfolio-app .hero-cursor-anchor {
+            display: inline-block;
+            position: relative;
+            width: 0;
+            height: 0.86em;
+            vertical-align: -0.05em;
             pointer-events: none;
           }
 
           .portfolio-app .hero-cursor {
-            display: inline-block;
+            position: absolute;
+            left: 0.09em;
+            top: 0;
             width: 0.055em;
-            height: 0.86em;
-            margin-left: 0.09em;
-            margin-right: -0.145em;
-            vertical-align: -0.05em;
+            height: 100%;
             background: #c89b3c;
             box-shadow:
               0 0 10px rgba(200, 155, 60, 0.78),
@@ -832,17 +1098,53 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           <p className="eyebrow">{portfolio.hero.eyebrow}</p>
         )}
 
-        <h1 aria-label={heroText}>
+        <h1
+          aria-label={heroText}
+          className={heroHeadingHeight !== null ? 'hero-headline-animated' : undefined}
+          style={
+            heroHeadingHeight !== null
+              ? { height: `${heroHeadingHeight}px` }
+              : undefined
+          }
+        >
+          {!staticHeroMode && (
+            <span
+              className="hero-measure"
+              aria-hidden="true"
+              ref={heroMeasureRef}
+            >
+              {renderHeadlineParts(headlineSplit)}
+            </span>
+          )}
+
           <span className="hero-typewriter" aria-hidden="true">
-            <span className="hero-primary-text">{heroBeforeText}</span>
-            {heroAccentText && (
-              <span className="hero-accent-text">{heroAccentText}</span>
-            )}
-            {heroAfterText && (
-              <span className="hero-primary-text">{heroAfterText}</span>
-            )}
-            <span className="hero-cursor" aria-hidden="true" />
-            <span className="hero-pending-text">{heroPendingText}</span>
+            {renderedHeroLines
+              ? renderedHeroLines.map((parts, idx) => {
+                  const isCurrentLine = idx === renderedHeroLines.length - 1
+                  const hasText = Boolean(
+                    parts.before || parts.accent || parts.after
+                  )
+                  return (
+                    <span key={idx} className="hero-line">
+                      {renderHeadlineParts(parts)}
+                      {isCurrentLine && !hasText && '\u200b'}
+                      {isCurrentLine && (
+                        <span className="hero-cursor-anchor" aria-hidden="true">
+                          <span className="hero-cursor" />
+                        </span>
+                      )}
+                    </span>
+                  )
+                })
+              : (
+                <>
+                  {renderHeadlineParts(fallbackHeroParts)}
+                  {!activeHeroText && '\u200b'}
+                  <span className="hero-cursor-anchor" aria-hidden="true">
+                    <span className="hero-cursor" />
+                  </span>
+                </>
+              )}
           </span>
         </h1>
 
