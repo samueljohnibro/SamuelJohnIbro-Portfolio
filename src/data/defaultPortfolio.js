@@ -799,6 +799,15 @@ export function normalizePortfolioData(raw) {
             ? pickStr(rawAttach.src, '').trim()
             : ''
         const inferPdf = /\.pdf(\?|$|#)/i.test(attachSrc)
+        const attachType =
+          rawAttach?.type === 'pdf' || (rawAttach?.type !== 'image' && inferPdf)
+            ? 'pdf'
+            : 'image'
+        const validShapes = ['auto', 'square', 'circle', 'landscape', 'portrait']
+        const attachShape =
+          attachType === 'image' && validShapes.includes(rawAttach?.shape)
+            ? rawAttach.shape
+            : 'auto'
         return {
           id: pickStr(c.id, `cred-${idx + 1}`),
           label: pickStr(c.label, 'CREDENTIAL'),
@@ -808,10 +817,8 @@ export function normalizePortfolioData(raw) {
           attachment: attachSrc
             ? {
                 src: attachSrc,
-                type:
-                  rawAttach.type === 'pdf' || (rawAttach.type !== 'image' && inferPdf)
-                    ? 'pdf'
-                    : 'image',
+                type: attachType,
+                shape: attachShape,
                 label: pickStr(
                   rawAttach.label,
                   inferPdf ? 'View Certificate (PDF)' : 'View Certificate'

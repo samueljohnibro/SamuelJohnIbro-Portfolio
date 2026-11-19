@@ -2971,6 +2971,7 @@ export default function AdminApp() {
                                 attachment: {
                                   src,
                                   type: resolvedType,
+                                  shape: c.attachment?.shape || 'auto',
                                   label:
                                     c.attachment?.label ||
                                     (resolvedType === 'pdf'
@@ -2989,7 +2990,13 @@ export default function AdminApp() {
                       />
 
                       {cred.attachment?.src && (
-                        <div className="admin-grid-2">
+                        <div
+                          className={
+                            cred.attachment.type !== 'pdf'
+                              ? 'admin-grid-3'
+                              : 'admin-grid-2'
+                          }
+                        >
                           <div className="admin-field">
                             <label
                               className="admin-field-label"
@@ -3022,6 +3029,48 @@ export default function AdminApp() {
                               <option value="pdf">PDF Document</option>
                             </select>
                           </div>
+
+                          {cred.attachment.type !== 'pdf' && (
+                            <div className="admin-field">
+                              <label
+                                className="admin-field-label"
+                                htmlFor={`cred-attach-shape-${cred.id}`}
+                              >
+                                Display Shape
+                              </label>
+                              <select
+                                id={`cred-attach-shape-${cred.id}`}
+                                className="admin-select"
+                                value={cred.attachment.shape || 'auto'}
+                                onChange={(e) =>
+                                  setDraft((d) => ({
+                                    ...d,
+                                    credentials: d.credentials.map((c, i) =>
+                                      i === idx && c.attachment
+                                        ? {
+                                            ...c,
+                                            attachment: {
+                                              ...c.attachment,
+                                              shape: e.target.value,
+                                            },
+                                          }
+                                        : c
+                                    ),
+                                  }))
+                                }
+                              >
+                                <option value="auto">
+                                  Auto (Match Uploaded Image)
+                                </option>
+                                <option value="square">Square (1:1)</option>
+                                <option value="circle">Circular Badge</option>
+                                <option value="landscape">
+                                  Wide Rectangle
+                                </option>
+                                <option value="portrait">Tall Portrait</option>
+                              </select>
+                            </div>
+                          )}
 
                           <div className="admin-field">
                             <label

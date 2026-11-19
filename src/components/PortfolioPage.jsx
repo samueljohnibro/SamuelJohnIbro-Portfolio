@@ -12,7 +12,9 @@ import {
   resolveHeadlineParts,
   sortProjectsByStatusAndTimeline,
 } from '../data/defaultPortfolio.js'
+import { useMasonryGrid } from '../hooks/useMasonryGrid.js'
 import { CredentialModal } from './CredentialModal.jsx'
+import { CredentialsGrid } from './CredentialsGrid.jsx'
 import { ProjectPreviewModal, ProjectSitePreview } from './ProjectPreview.jsx'
 import { ProjectsGrid } from './ProjectsGrid.jsx'
 import { SpaceBackground } from './SpaceBackground.jsx'
@@ -210,6 +212,7 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
   const heroSectionRef = useRef(null)
   const heroMeasureRef = useRef(null)
   const previewReturnFocusRef = useRef(null)
+  const skillsGridRef = useRef(null)
 
   // Fetch live portfolio content from Worker/D1 on mount & listen for cross-tab admin publishes
   useEffect(() => {
@@ -529,6 +532,14 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     () => (portfolio.skills || []).filter((item) => item.visible !== false),
     [portfolio.skills]
   )
+
+  useMasonryGrid({
+    gridRef: skillsGridRef,
+    cardSelector: ':scope > div',
+    gapCssVar: '--skills-gap',
+    defaultGap: 18,
+    items: visibleSkills,
+  })
 
   const visibleTrainingMedia = useMemo(
     () =>
@@ -1267,7 +1278,7 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           <p className="section-label">{portfolio.skillsSection.label}</p>
           <h2>{portfolio.skillsSection.heading}</h2>
 
-          <div className="skills-grid">
+          <div ref={skillsGridRef} className="skills-grid">
             {visibleSkills.map((group) => (
               <div key={group.id}>
                 <h3>{group.title}</h3>
@@ -1322,70 +1333,10 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           <p className="section-label">{portfolio.credentialsSection.label}</p>
           <h2>{portfolio.credentialsSection.heading}</h2>
 
-          <div className="credentials-grid">
-            {visibleCredentials.map((cred) => {
-              const attach = cred.attachment?.src ? cred.attachment : null
-              const isPdf = attach?.type === 'pdf'
-              const attachLabel =
-                attach?.label ||
-                (isPdf ? 'View Certificate (PDF)' : 'View Certificate')
-
-              return (
-                <article key={cred.id} className="credential-card">
-                  <p className="credential-label">{cred.label}</p>
-                  <h3>{cred.title}</h3>
-                  {cred.institution && (
-                    <p className="credential-institution">{cred.institution}</p>
-                  )}
-                  <p className="credential-description">{cred.description}</p>
-
-                  {attach && (
-                    <div className="credential-attachment">
-                      {isPdf ? (
-                        <button
-                          type="button"
-                          className="credential-pdf-card"
-                          onClick={(e) =>
-                            handleOpenCredential(cred, e.currentTarget)
-                          }
-                        >
-                          <span className="credential-pdf-badge">PDF</span>
-                          <span className="credential-pdf-meta">
-                            <strong>{attachLabel}</strong>
-                            <span>Click to preview certificate</span>
-                          </span>
-                          <span
-                            className="credential-pdf-expand"
-                            aria-hidden="true"
-                          >
-                            ⤢
-                          </span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="credential-attachment-preview"
-                          onClick={(e) =>
-                            handleOpenCredential(cred, e.currentTarget)
-                          }
-                          aria-label={`Inspect ${cred.title} certificate or badge`}
-                        >
-                          <img
-                            src={attach.src}
-                            alt={`${cred.title} certificate or badge`}
-                            loading="lazy"
-                          />
-                          <span className="credential-attachment-hint">
-                            {attachLabel} ⤢
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </article>
-              )
-            })}
-          </div>
+          <CredentialsGrid
+            credentials={visibleCredentials}
+            onOpenCredential={handleOpenCredential}
+          />
 
           {portfolio.credentialsSection.summary && (
             <p className="credentials-summary">
