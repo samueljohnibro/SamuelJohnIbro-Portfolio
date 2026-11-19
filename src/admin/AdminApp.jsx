@@ -372,18 +372,47 @@ export default function AdminApp() {
   const handleLogin = async (event) => {
     event.preventDefault()
     setLoginError('')
+
+    const formData = new FormData(event.currentTarget)
+    const rawPassword =
+      passwordInput || String(formData.get('password') || '')
+    const rawUsername = String(formData.get('username') || '').trim()
+
+    if (!rawPassword) {
+      setLoginError('Please enter your admin password.')
+      return
+    }
+
     setLoginBusy(true)
     try {
       const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: passwordInput }),
+        body: JSON.stringify({ password: rawPassword }),
       })
       const payload = await res.json().catch(() => ({}))
       if (!res.ok) {
         setLoginError(payload.error || 'Authentication failed.')
         return
       }
+
+      if (
+        typeof window !== 'undefined' &&
+        typeof window.PasswordCredential === 'function' &&
+        navigator.credentials?.store
+      ) {
+        try {
+          const cred = new window.PasswordCredential({
+            id: rawUsername || 'admin',
+            name: 'Samuel John-Ibro Portfolio Admin',
+            password: rawPassword,
+          })
+          await navigator.credentials.store(cred)
+        } catch {
+          // Ignore if browser declines credential store
+        }
+      }
+
       setPasswordInput('')
       await checkSession()
       notify('Unlocked Portfolio Studio.', 'success')
@@ -591,7 +620,29 @@ export default function AdminApp() {
             )}
 
             {sessionState.configured ? (
-              <form className="admin-auth-form" onSubmit={handleLogin}>
+              <form
+                id="admin-login-form"
+                className="admin-auth-form"
+                method="post"
+                action="/api/admin/login"
+                autoComplete="on"
+                onSubmit={handleLogin}
+              >
+                <div className="admin-field">
+                  <label className="admin-field-label" htmlFor="admin-username-input">
+                    <span>Account / Username</span>
+                    <span className="admin-field-hint">Optional (for browser autofill)</span>
+                  </label>
+                  <input
+                    id="admin-username-input"
+                    name="username"
+                    type="text"
+                    className="admin-input"
+                    autoComplete="username"
+                    placeholder="Optional — e.g. your email or admin label"
+                  />
+                </div>
+
                 <div className="admin-field">
                   <label className="admin-field-label" htmlFor="admin-password-input">
                     Admin Password
@@ -599,17 +650,18 @@ export default function AdminApp() {
                   <div className="admin-password-wrap">
                     <input
                       id="admin-password-input"
+                      name="password"
                       type={showLoginPassword ? 'text' : 'password'}
                       className="admin-input"
                       value={passwordInput}
                       onChange={(e) => setPasswordInput(e.target.value)}
                       placeholder="Enter your secret password..."
                       autoComplete="current-password"
-                      autoFocus
                       required
                     />
                     <button
                       type="button"
+                      tabIndex={-1}
                       className="admin-password-toggle"
                       onClick={() => setShowLoginPassword((v) => !v)}
                     >
@@ -625,7 +677,7 @@ export default function AdminApp() {
                 <button
                   type="submit"
                   className="admin-btn admin-btn-primary"
-                  disabled={loginBusy || !passwordInput}
+                  disabled={loginBusy}
                 >
                   {loginBusy ? 'Verifying...' : 'Sign In to Studio'}
                 </button>

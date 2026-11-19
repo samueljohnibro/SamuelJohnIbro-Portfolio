@@ -135,6 +135,15 @@
   background: rgba(14, 14, 14, 0.94);
 }
 
+.admin-input:-webkit-autofill,
+.admin-input:-webkit-autofill:hover,
+.admin-input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px #0d0d0d inset;
+  border-color: rgba(200, 155, 60, 0.55);
+  transition: background-color 5000s ease-in-out 0s;
+}
+
 .admin-password-wrap {
   position: relative;
   display: flex;
