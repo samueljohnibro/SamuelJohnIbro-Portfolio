@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { FaviconCandidateImg } from '../components/ProjectLogo.jsx'
 import { REPO_MEDIA_ASSETS } from '../data/defaultPortfolio.js'
 import { formatBytes, uploadMediaFile } from './mediaUpload.js'
 
@@ -12,6 +13,8 @@ export function MediaField({
   forcedType = null,
   allowClear = false,
   placeholder = 'https://... or /media/... or /assets/...',
+  fallbackCandidates = [],
+  fallbackHint = '',
   uploadedMedia = [],
   onMediaUploaded,
   onNotify,
@@ -84,14 +87,35 @@ export function MediaField({
       (allowPdf && item.type === 'pdf')
   )
 
+  const hasAutoFaviconFallback =
+    !value && Array.isArray(fallbackCandidates) && fallbackCandidates.length > 0
+
   return (
     <div className="admin-media-box">
-      {label && <span className="admin-field-label">{label}</span>}
+      {label && (
+        <span className="admin-field-label">
+          <span>{label}</span>
+          {hasAutoFaviconFallback && (
+            <span className="admin-field-hint" style={{ color: 'var(--accent)' }}>
+              {fallbackHint || 'Auto-using site favicon'}
+            </span>
+          )}
+        </span>
+      )}
 
       <div className="admin-media-row">
         <div className="admin-media-thumb">
           {!value ? (
-            <span>None</span>
+            hasAutoFaviconFallback ? (
+              <FaviconCandidateImg
+                candidates={fallbackCandidates}
+                alt={label || 'Site favicon'}
+                fallback={<span>None</span>}
+                style={{ objectFit: 'contain', padding: '10px' }}
+              />
+            ) : (
+              <span>None</span>
+            )
           ) : isPdfPreview ? (
             <span style={{ color: 'var(--accent)', fontWeight: 700 }}>PDF</span>
           ) : isVideoPreview ? (

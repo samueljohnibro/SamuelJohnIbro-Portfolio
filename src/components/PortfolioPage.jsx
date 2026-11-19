@@ -22,6 +22,7 @@ import {
 } from '../seo/portfolioSeo.js'
 import { CredentialModal } from './CredentialModal.jsx'
 import { CredentialsGrid } from './CredentialsGrid.jsx'
+import { ProjectLogo } from './ProjectLogo.jsx'
 import { ProjectPreviewModal, ProjectSitePreview } from './ProjectPreview.jsx'
 import { ProjectsGrid } from './ProjectsGrid.jsx'
 import { ReviewModal } from './ReviewModal.jsx'
@@ -1712,18 +1713,10 @@ export function PortfolioPage({
                     )}
                   </div>
 
-                  {extra.logo?.src && (
-                    <div className="project-logo">
-                      <img
-                        src={extra.logo.src}
-                        alt={extra.logo.alt || `${extra.title} logo`}
-                        width={52}
-                        height={52}
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    </div>
-                  )}
+                  <ProjectLogo
+                    item={extra}
+                    fallbackUrl={extra.liveUrl || ctaUrl || ''}
+                  />
 
                   <div className="extra-header-info">
                     <h3>{extra.title}</h3>

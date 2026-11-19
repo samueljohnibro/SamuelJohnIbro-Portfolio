@@ -1,6 +1,7 @@
 import {
   DEFAULT_PORTFOLIO,
   isProjectLive,
+  resolveProjectLogo,
   sortProjectsByStatusAndTimeline,
 } from '../data/defaultPortfolio.js'
 import { computeReviewsSummary } from '../data/reviewsMeta.js'
@@ -477,7 +478,7 @@ export function buildJsonLdGraph(
       title: project.title,
       description: project.description,
       url: toAbsoluteUrl(project.liveUrl || '', origin) || `${origin}/#projects`,
-      image: toAbsoluteUrl(project.logo?.src || '', origin),
+      image: toAbsoluteUrl(resolveProjectLogo(project)?.src || '', origin),
       keywords: (project.tags || []).join(', '),
       status: isProjectLive(project) ? 'Published' : 'In Development',
     })),
@@ -487,7 +488,7 @@ export function buildJsonLdGraph(
       url:
         toAbsoluteUrl(extra.ctaHref || extra.liveUrl || '', origin) ||
         `${origin}/#extras`,
-      image: toAbsoluteUrl(extra.logo?.src || '', origin),
+      image: toAbsoluteUrl(resolveProjectLogo(extra)?.src || '', origin),
       keywords: (extra.tags || []).join(', '),
       status: extra.isLive ? 'Published' : 'Featured',
     })),

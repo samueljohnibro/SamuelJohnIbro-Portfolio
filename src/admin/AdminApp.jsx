@@ -3,6 +3,7 @@ import { SpaceBackground } from '../components/SpaceBackground.jsx'
 import {
   DEFAULT_PORTFOLIO,
   REPO_MEDIA_ASSETS,
+  buildFaviconCandidates,
   clonePortfolioData,
   isProjectLive,
   normalizePortfolioData,
@@ -2266,6 +2267,15 @@ export default function AdminApp() {
                           label="Project Logo (Optional)"
                           value={project.logo?.src || ''}
                           allowClear
+                          placeholder={
+                            project.liveUrl
+                              ? 'Leave blank to auto-use Live Project URL favicon, or upload/paste logo...'
+                              : 'https://... or /media/... or /assets/... (or leave blank to use Live URL favicon)'
+                          }
+                          fallbackCandidates={buildFaviconCandidates(
+                            project.liveUrl || project.url || ''
+                          )}
+                          fallbackHint="Auto-using site favicon from Live Project URL"
                           onChange={(src) =>
                             setDraft((d) => ({
                               ...d,
@@ -3648,6 +3658,15 @@ export default function AdminApp() {
                         label="Logo (Optional)"
                         value={extra.logo?.src || ''}
                         allowClear
+                        placeholder={
+                          extra.liveUrl || extra.ctaHref
+                            ? 'Leave blank to auto-use site favicon, or upload/paste logo...'
+                            : 'https://... or /media/... or /assets/... (or leave blank to use site favicon)'
+                        }
+                        fallbackCandidates={buildFaviconCandidates(
+                          extra.liveUrl || extra.ctaHref || ''
+                        )}
+                        fallbackHint="Auto-using site favicon from link"
                         onChange={(src) =>
                           setDraft((d) => ({
                             ...d,

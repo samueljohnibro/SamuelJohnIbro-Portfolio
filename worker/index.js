@@ -5,6 +5,7 @@ import {
   DEFAULT_PORTFOLIO,
   isSafeMediaOrLinkUrl,
   normalizePortfolioData,
+  parseProjectHttpUrl,
 } from '../src/data/defaultPortfolio.js'
 import {
   MAX_OWNER_REPLY_LENGTH,
@@ -1091,6 +1092,645 @@ async function handleServeMedia(request, env, mediaId) {
   })
 }
 
+const MAX_FAVICON_HTML_SCAN_BYTES = 64 * 1024
+const MAX_FAVICON_IMAGE_BYTES = 2 * 1024 * 1024
+
+export function isSafePublicFaviconUrl(rawUrl) {
+  let parsed
+  try {
+    parsed = rawUrl instanceof URL ? rawUrl : new URL(String(rawUrl))
+  } catch {
+    return false
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return false
+  }
+
+  const host = parsed.hostname.toLowerCase().trim()
+  if (
+    !host ||
+    !host.includes('.') ||
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    host.includes(':') ||
+    host.startsWith('[')
+  ) {
+    return false
+  }
+
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    const parts = host.split('.').map(Number)
+    if (parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+      return false
+    }
+    const [a, b] = parts
+    if (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      a >= 224 ||
+      (a === 169 && b === 254) ||
+      (a === 192 && b === 168) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 100 && b >= 64 && b <= 127)
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
+
+export function detectValidImageMime(bytes, contentTypeHeader = '') {
+  if (!(bytes instanceof Uint8Array)) return null
+  if (bytes.byteLength < 4 || bytes.byteLength > MAX_FAVICON_IMAGE_BYTES) {
+    return null
+  }
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    bytes.byteLength >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return 'image/png'
+  }
+
+  // ICO / CUR: 00 00 01 00 or 00 00 02 00
+  if (
+    bytes[0] === 0x00 &&
+    bytes[1] === 0x00 &&
+    (bytes[2] === 0x01 || bytes[2] === 0x02) &&
+    bytes[3] === 0x00
+  ) {
+    return 'image/x-icon'
+  }
+
+  // JPEG: FF D8 FF
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg'
+  }
+
+  // GIF: GIF87a / GIF89a
+  if (
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38
+  ) {
+    return 'image/gif'
+  }
+
+  // WEBP: RIFF....WEBP
+  if (
+    bytes.byteLength >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+
+  // BMP: BM
+  if (bytes.byteLength >= 26 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    return 'image/bmp'
+  }
+
+  // AVIF: ....ftypavif
+  if (
+    bytes.byteLength >= 12 &&
+    bytes[4] === 0x66 &&
+    bytes[5] === 0x74 &&
+    bytes[6] === 0x79 &&
+    bytes[7] === 0x70 &&
+    bytes[8] === 0x61 &&
+    bytes[9] === 0x76 &&
+    bytes[10] === 0x69 &&
+    bytes[11] === 0x66
+  ) {
+    return 'image/avif'
+  }
+
+  const headText = new TextDecoder()
+    .decode(bytes.subarray(0, Math.min(bytes.byteLength, 512)))
+    .replace(/^\uFEFF/, '')
+    .trimStart()
+    .toLowerCase()
+
+  if (
+    headText.startsWith('<!doctype html') ||
+    headText.startsWith('<html') ||
+    headText.startsWith('<head') ||
+    headText.startsWith('<body') ||
+    headText.startsWith('<script')
+  ) {
+    return null
+  }
+
+  if (headText.includes('<svg') && !headText.includes('<html')) {
+    return 'image/svg+xml'
+  }
+
+  const normalizedCt = String(contentTypeHeader || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase()
+  if (normalizedCt.startsWith('image/')) {
+    return normalizedCt
+  }
+
+  return null
+}
+
+function decodeHtmlEntities(str = '') {
+  return String(str)
+    .replace(/&amp;/gi, '&')
+    .replace(/&#38;/g, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+}
+
+function parseHtmlTagAttributes(tagHtml) {
+  const attrs = {}
+  const attrRegex =
+    /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
+  // Skip tag name itself
+  attrRegex.exec(tagHtml)
+  let match = attrRegex.exec(tagHtml)
+  while (match) {
+    const name = match[1].toLowerCase()
+    const rawVal = match[2] ?? match[3] ?? match[4] ?? ''
+    attrs[name] = decodeHtmlEntities(rawVal).trim()
+    match = attrRegex.exec(tagHtml)
+  }
+  return attrs
+}
+
+function scoreIconCandidate({ rel = '', sizes = '', type = '', href = '' }) {
+  const relLower = rel.toLowerCase()
+  const tokens = relLower.split(/\s+/).filter(Boolean)
+  const hasIconToken =
+    tokens.includes('icon') ||
+    tokens.includes('apple-touch-icon') ||
+    tokens.includes('apple-touch-icon-precomposed') ||
+    tokens.includes('fluid-icon') ||
+    tokens.includes('mask-icon')
+
+  if (!hasIconToken) return -1
+
+  let score = 50
+  if (
+    tokens.includes('apple-touch-icon') ||
+    tokens.includes('apple-touch-icon-precomposed')
+  ) {
+    score = 96
+  } else if (tokens.includes('icon') && !tokens.includes('shortcut')) {
+    score = 100
+  } else if (tokens.includes('shortcut') && tokens.includes('icon')) {
+    score = 88
+  } else if (tokens.includes('fluid-icon')) {
+    score = 85
+  } else if (tokens.includes('mask-icon')) {
+    score = 45
+  }
+
+  const typeLower = type.toLowerCase()
+  const hrefLower = href.toLowerCase().split('?')[0]
+  if (typeLower.includes('svg') || hrefLower.endsWith('.svg')) {
+    score += 45
+  } else if (
+    typeLower.includes('png') ||
+    typeLower.includes('webp') ||
+    hrefLower.endsWith('.png') ||
+    hrefLower.endsWith('.webp')
+  ) {
+    score += 35
+  } else if (typeLower.includes('icon') || hrefLower.endsWith('.ico')) {
+    score += 15
+  }
+
+  const sizesLower = sizes.toLowerCase().trim()
+  if (sizesLower === 'any') {
+    score += 40
+  } else if (sizesLower) {
+    let maxDim = 0
+    for (const part of sizesLower.split(/\s+/)) {
+      const dims = part.split('x').map(Number)
+      if (dims.length === 2 && Number.isFinite(dims[0]) && dims[0] > maxDim) {
+        maxDim = dims[0]
+      }
+    }
+    if (maxDim >= 64 && maxDim <= 512) {
+      score += 40
+    } else if (maxDim >= 32 && maxDim < 64) {
+      score += 25
+    } else if (maxDim > 512) {
+      score += 20
+    } else if (maxDim > 0) {
+      score += 10
+    }
+  }
+
+  return score
+}
+
+export function extractIconLinksFromHtml(htmlText, baseUrl) {
+  const headEndIdx = htmlText.search(/<\/head\s*>/i)
+  const headSlice =
+    headEndIdx !== -1 ? htmlText.slice(0, headEndIdx) : htmlText
+
+  const scoredIcons = []
+  let manifestUrl = null
+
+  const linkRegex = /<link\b[^>]*>/gi
+  let match = linkRegex.exec(headSlice)
+  while (match) {
+    const attrs = parseHtmlTagAttributes(match[0])
+    const rel = (attrs.rel || '').toLowerCase()
+    const href = (attrs.href || '').trim()
+
+    if (href) {
+      if (rel.split(/\s+/).includes('manifest') && !manifestUrl) {
+        try {
+          manifestUrl = new URL(href, baseUrl).href
+        } catch {
+          // ignore invalid manifest href
+        }
+      } else {
+        const score = scoreIconCandidate({
+          rel,
+          sizes: attrs.sizes || '',
+          type: attrs.type || '',
+          href,
+        })
+        if (score >= 0) {
+          if (href.startsWith('data:image/')) {
+            scoredIcons.push({ href, score })
+          } else {
+            try {
+              const resolvedHref = new URL(href, baseUrl).href
+              if (isSafePublicFaviconUrl(resolvedHref)) {
+                scoredIcons.push({ href: resolvedHref, score })
+              }
+            } catch {
+              // ignore malformed icon href
+            }
+          }
+        }
+      }
+    }
+    match = linkRegex.exec(headSlice)
+  }
+
+  scoredIcons.sort((a, b) => b.score - a.score)
+  const uniqueUrls = []
+  const seen = new Set()
+  for (const item of scoredIcons) {
+    if (!seen.has(item.href)) {
+      seen.add(item.href)
+      uniqueUrls.push(item.href)
+    }
+  }
+
+  return { iconUrls: uniqueUrls, manifestUrl }
+}
+
+async function readBoundedText(response, maxBytes = MAX_FAVICON_HTML_SCAN_BYTES) {
+  if (!response.body) {
+    const text = await response.text()
+    return text.slice(0, maxBytes)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let totalBytes = 0
+  let text = ''
+
+  try {
+    while (totalBytes < maxBytes) {
+      const { done, value } = await reader.read()
+      if (done || !value) break
+      const remaining = maxBytes - totalBytes
+      const slice = value.byteLength > remaining ? value.subarray(0, remaining) : value
+      totalBytes += slice.byteLength
+      text += decoder.decode(slice, { stream: true })
+      if (/<\/head\s*>/i.test(text)) {
+        break
+      }
+    }
+    text += decoder.decode()
+  } finally {
+    try {
+      await reader.cancel()
+    } catch {
+      // ignore stream cancel errors
+    }
+  }
+
+  return text
+}
+
+function decodeDataImageUri(dataUri) {
+  if (typeof dataUri !== 'string' || !dataUri.startsWith('data:image/')) {
+    return null
+  }
+  const commaIdx = dataUri.indexOf(',')
+  if (commaIdx === -1) return null
+  const meta = dataUri.slice(5, commaIdx)
+  const payload = dataUri.slice(commaIdx + 1)
+  const isBase64 = /;base64/i.test(meta)
+  const declaredMime = meta.split(';')[0].trim().toLowerCase()
+
+  try {
+    let bytes
+    if (isBase64) {
+      const binary = atob(payload.trim())
+      bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i)
+      }
+    } else {
+      const decoded = decodeURIComponent(payload)
+      bytes = new TextEncoder().encode(decoded)
+    }
+    const verifiedMime = detectValidImageMime(bytes, declaredMime)
+    if (!verifiedMime) return null
+    return { bytes, mimeType: verifiedMime }
+  } catch {
+    return null
+  }
+}
+
+async function fetchVerifiedIconCandidate(candidateUrl) {
+  if (!candidateUrl || typeof candidateUrl !== 'string') return null
+
+  if (candidateUrl.startsWith('data:image/')) {
+    return decodeDataImageUri(candidateUrl)
+  }
+
+  if (!isSafePublicFaviconUrl(candidateUrl)) {
+    return null
+  }
+
+  try {
+    const res = await fetch(candidateUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(3500),
+      headers: {
+        Accept:
+          'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (compatible; chomkaTECH-PortfolioBot/1.0)',
+      },
+    })
+
+    if (!res.ok) return null
+    if (res.url && !isSafePublicFaviconUrl(res.url)) return null
+
+    const contentLength = Number(res.headers.get('Content-Length') || 0)
+    if (contentLength > MAX_FAVICON_IMAGE_BYTES) return null
+
+    const buffer = await res.arrayBuffer()
+    const bytes = new Uint8Array(buffer)
+    const mimeType = detectValidImageMime(
+      bytes,
+      res.headers.get('Content-Type') || ''
+    )
+    if (!mimeType) return null
+
+    return { bytes, mimeType }
+  } catch {
+    return null
+  }
+}
+
+async function discoverSiteFaviconCandidates(targetParsed) {
+  let finalOrigin = targetParsed.origin
+  let finalHostname = targetParsed.hostname
+  const htmlCandidates = []
+
+  try {
+    const res = await fetch(targetParsed.href, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(4000),
+      headers: {
+        Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/*,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (compatible; chomkaTECH-PortfolioBot/1.0)',
+      },
+    })
+
+    if (res.url && isSafePublicFaviconUrl(res.url)) {
+      const finalUrl = new URL(res.url)
+      finalOrigin = finalUrl.origin
+      finalHostname = finalUrl.hostname.toLowerCase()
+    }
+
+    const contentType = (res.headers.get('Content-Type') || '').toLowerCase()
+    if (res.ok && contentType.startsWith('image/')) {
+      const buffer = await res.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      const mimeType = detectValidImageMime(bytes, contentType)
+      if (mimeType) {
+        return {
+          directImage: { bytes, mimeType },
+          candidates: [],
+        }
+      }
+    }
+
+    if (
+      res.ok &&
+      (contentType.includes('text/html') ||
+        contentType.includes('application/xhtml+xml'))
+    ) {
+      const htmlSlice = await readBoundedText(res, MAX_FAVICON_HTML_SCAN_BYTES)
+      const baseUrl = res.url && isSafePublicFaviconUrl(res.url) ? res.url : targetParsed.href
+      const { iconUrls, manifestUrl } = extractIconLinksFromHtml(
+        htmlSlice,
+        baseUrl
+      )
+      htmlCandidates.push(...iconUrls)
+
+      if (htmlCandidates.length === 0 && manifestUrl && isSafePublicFaviconUrl(manifestUrl)) {
+        try {
+          const manifestRes = await fetch(manifestUrl, {
+            method: 'GET',
+            redirect: 'follow',
+            signal: AbortSignal.timeout(2500),
+            headers: { Accept: 'application/manifest+json,application/json,*/*' },
+          })
+          if (manifestRes.ok) {
+            const manifestText = await readBoundedText(manifestRes, 64 * 1024)
+            const manifest = JSON.parse(manifestText)
+            if (Array.isArray(manifest?.icons)) {
+              const scored = manifest.icons
+                .filter((icon) => icon && typeof icon.src === 'string' && icon.src.trim())
+                .map((icon) => ({
+                  src: icon.src.trim(),
+                  score: scoreIconCandidate({
+                    rel: 'icon',
+                    sizes: icon.sizes || '',
+                    type: icon.type || '',
+                    href: icon.src,
+                  }),
+                }))
+                .sort((a, b) => b.score - a.score)
+
+              for (const item of scored) {
+                try {
+                  const resolved = new URL(item.src, manifestRes.url || manifestUrl).href
+                  if (isSafePublicFaviconUrl(resolved)) {
+                    htmlCandidates.push(resolved)
+                  }
+                } catch {
+                  // ignore invalid manifest icon src
+                }
+              }
+            }
+          }
+        } catch {
+          // ignore manifest fetch failures
+        }
+      }
+    }
+  } catch {
+    // Fall back to origin + public favicon resolvers if HTML fetch fails
+  }
+
+  const originsToTry =
+    finalOrigin !== targetParsed.origin
+      ? [finalOrigin, targetParsed.origin]
+      : [finalOrigin]
+
+  const allCandidates = [...htmlCandidates]
+  for (const origin of originsToTry) {
+    allCandidates.push(
+      `${origin}/favicon.svg`,
+      `${origin}/favicon.png`,
+      `${origin}/apple-touch-icon.png`,
+      `${origin}/favicon.ico`
+    )
+  }
+
+  allCandidates.push(
+    `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(finalOrigin)}`,
+    `https://icons.duckduckgo.com/ip3/${encodeURIComponent(finalHostname)}.ico`
+  )
+
+  const deduplicated = []
+  const seen = new Set()
+  for (const candidate of allCandidates) {
+    if (!seen.has(candidate)) {
+      seen.add(candidate)
+      deduplicated.push(candidate)
+    }
+  }
+
+  return {
+    directImage: null,
+    candidates: deduplicated,
+  }
+}
+
+async function handleFaviconProxy(request, url) {
+  const rawTarget = (url.searchParams.get('url') || '').trim()
+  const targetParsed = parseProjectHttpUrl(rawTarget)
+  if (!targetParsed || !isSafePublicFaviconUrl(targetParsed.href)) {
+    return jsonResponse(
+      { error: 'Please provide a valid public http(s) URL.' },
+      400
+    )
+  }
+
+  const cacheKeyUrl = new URL('/api/favicon', url.origin)
+  cacheKeyUrl.searchParams.set('url', targetParsed.href)
+  const cacheKey = new Request(cacheKeyUrl.href, { method: 'GET' })
+  const edgeCache =
+    typeof caches !== 'undefined' && caches?.default ? caches.default : null
+
+  if (edgeCache) {
+    try {
+      const cached = await edgeCache.match(cacheKey)
+      if (cached) {
+        if (request.method === 'HEAD') {
+          return new Response(null, {
+            status: cached.status,
+            headers: cached.headers,
+          })
+        }
+        return cached
+      }
+    } catch {
+      // ignore cache read error
+    }
+  }
+
+  const { directImage, candidates } =
+    await discoverSiteFaviconCandidates(targetParsed)
+
+  let verified = directImage
+  if (!verified) {
+    for (const candidateUrl of candidates) {
+      verified = await fetchVerifiedIconCandidate(candidateUrl)
+      if (verified) break
+    }
+  }
+
+  if (!verified) {
+    return new Response('Favicon not found', {
+      status: 404,
+      headers: {
+        'Cache-Control': 'public, max-age=600',
+        'X-Robots-Tag': 'noindex',
+      },
+    })
+  }
+
+  const headers = {
+    'Content-Type': verified.mimeType,
+    'Content-Length': String(verified.bytes.byteLength),
+    'Cache-Control':
+      'public, max-age=86400, s-maxage=604800, stale-while-revalidate=604800',
+    'X-Content-Type-Options': 'nosniff',
+  }
+
+  if (verified.mimeType === 'image/svg+xml') {
+    headers['Content-Security-Policy'] =
+      "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+  }
+
+  const fullResponse = new Response(verified.bytes, {
+    status: 200,
+    headers,
+  })
+
+  if (edgeCache) {
+    try {
+      await edgeCache.put(cacheKey, fullResponse.clone())
+    } catch {
+      // ignore cache put error
+    }
+  }
+
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers })
+  }
+
+  return fullResponse
+}
+
 async function handleApi(request, env, url) {
   const path = url.pathname
 
@@ -1113,6 +1753,13 @@ async function handleApi(request, env, url) {
   if (path === '/api/portfolio' && request.method === 'GET') {
     const result = await readPortfolioFromDb(env)
     return jsonResponse(result)
+  }
+
+  if (
+    path === '/api/favicon' &&
+    (request.method === 'GET' || request.method === 'HEAD')
+  ) {
+    return handleFaviconProxy(request, url)
   }
 
   if (path === '/api/reviews' && request.method === 'GET') {

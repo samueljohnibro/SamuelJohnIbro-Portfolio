@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { isProjectLive } from '../data/defaultPortfolio.js'
 import { useMasonryGrid } from '../hooks/useMasonryGrid.js'
+import { ProjectLogo } from './ProjectLogo.jsx'
 import { ProjectSitePreview } from './ProjectPreview.jsx'
 
 export function ProjectsGrid({
@@ -42,18 +43,7 @@ export function ProjectsGrid({
               </span>
             </div>
 
-            {project.logo?.src && (
-              <div className="project-logo">
-                <img
-                  src={project.logo.src}
-                  alt={project.logo.alt || `${project.title} logo`}
-                  width={52}
-                  height={52}
-                  loading="lazy"
-                  decoding="async"
-                />
-              </div>
-            )}
+            <ProjectLogo item={project} fallbackUrl={liveUrl || ''} />
 
             <h3>{project.title}</h3>
 

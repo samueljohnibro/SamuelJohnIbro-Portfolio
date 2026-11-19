@@ -612,6 +612,103 @@ export function isSafeMediaOrLinkUrl(value, allowMailto = false) {
   }
 }
 
+export function parseProjectHttpUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return null
+  const trimmed = rawUrl.trim()
+  if (
+    !trimmed ||
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('#') ||
+    /^(mailto|tel|javascript|data|blob):/i.test(trimmed)
+  ) {
+    return null
+  }
+
+  let candidate = trimmed
+  if (
+    !/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate) &&
+    /^[a-z0-9-]+(\.[a-z0-9-]+)+([/?#].*)?$/i.test(candidate)
+  ) {
+    candidate = `https://${candidate}`
+  }
+
+  try {
+    const parsed = new URL(candidate)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return null
+    }
+    const hostname = parsed.hostname.toLowerCase()
+    if (!hostname || !hostname.includes('.')) {
+      return null
+    }
+    return {
+      href: parsed.href,
+      origin: parsed.origin,
+      hostname,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function buildFaviconCandidates(rawUrl) {
+  const parsed = parseProjectHttpUrl(rawUrl)
+  if (!parsed) return []
+  return [
+    `/api/favicon?url=${encodeURIComponent(parsed.href)}`,
+    `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(parsed.origin)}`,
+    `https://icons.duckduckgo.com/ip3/${encodeURIComponent(parsed.hostname)}.ico`,
+    `${parsed.origin}/favicon.ico`,
+    `${parsed.origin}/favicon.png`,
+    `${parsed.origin}/apple-touch-icon.png`,
+  ]
+}
+
+export function resolveProjectLogo(item, fallbackLink = '') {
+  if (!item || typeof item !== 'object') return null
+
+  const customSrc =
+    item.logo && typeof item.logo === 'object' && typeof item.logo.src === 'string'
+      ? item.logo.src.trim()
+      : ''
+  const customAlt =
+    item.logo && typeof item.logo === 'object' && typeof item.logo.alt === 'string'
+      ? item.logo.alt.trim()
+      : ''
+  const defaultAlt = `${(typeof item.title === 'string' && item.title.trim()) || 'Project'} logo`
+
+  const rawLink =
+    (typeof item.liveUrl === 'string' && item.liveUrl.trim()) ||
+    (typeof item.url === 'string' && item.url.trim()) ||
+    (typeof item.ctaHref === 'string' && item.ctaHref.trim()) ||
+    (typeof fallbackLink === 'string' && fallbackLink.trim()) ||
+    ''
+  const faviconCandidates = buildFaviconCandidates(rawLink)
+
+  if (customSrc) {
+    return {
+      src: customSrc,
+      alt: customAlt || defaultAlt,
+      isFallbackFavicon: false,
+      candidates: [
+        customSrc,
+        ...faviconCandidates.filter((candidate) => candidate !== customSrc),
+      ],
+    }
+  }
+
+  if (faviconCandidates.length > 0) {
+    return {
+      src: faviconCandidates[0],
+      alt: defaultAlt,
+      isFallbackFavicon: true,
+      candidates: faviconCandidates,
+    }
+  }
+
+  return null
+}
+
 export function normalizePortfolioData(raw) {
   const base = clonePortfolioData(DEFAULT_PORTFOLIO)
   if (!raw || typeof raw !== 'object') {
@@ -622,6 +719,19 @@ export function normalizePortfolioData(raw) {
     typeof val === 'string' ? val : fallback
   const pickBool = (val, fallback = true) =>
     typeof val === 'boolean' ? val : fallback
+  const normalizeExternalUrl = (val) => {
+    const str = pickStr(val, '').trim()
+    if (!str) return ''
+    if (
+      !/^[a-z][a-z0-9+.-]*:/i.test(str) &&
+      !str.startsWith('/') &&
+      !str.startsWith('#') &&
+      /^[a-z0-9-]+(\.[a-z0-9-]+)+([/?#].*)?$/i.test(str)
+    ) {
+      return `https://${str}`
+    }
+    return str
+  }
 
   if (raw.site && typeof raw.site === 'object') {
     base.site.brandName = pickStr(raw.site.brandName, base.site.brandName)
@@ -758,7 +868,7 @@ export function normalizePortfolioData(raw) {
         tags: Array.isArray(p.tags)
           ? p.tags.map((t) => String(t).trim()).filter(Boolean)
           : [],
-        liveUrl: pickStr(p.liveUrl ?? p.url, ''),
+        liveUrl: normalizeExternalUrl(p.liveUrl ?? p.url),
         liveLabel: pickStr(p.liveLabel, 'VIEW LIVE PROJECT'),
         liveAriaLabel: pickStr(p.liveAriaLabel, ''),
         showPreview: pickBool(p.showPreview, true),
@@ -929,14 +1039,14 @@ export function normalizePortfolioData(raw) {
             : null,
         title: pickStr(e.title, 'Creative Project'),
         subtitle: pickStr(e.subtitle, ''),
-        liveUrl: pickStr(e.liveUrl, ''),
+        liveUrl: normalizeExternalUrl(e.liveUrl),
         showPreview: pickBool(e.showPreview, true),
         description: pickStr(e.description, ''),
         tags: Array.isArray(e.tags)
           ? e.tags.map((t) => String(t).trim()).filter(Boolean)
           : [],
         ctaLabel: pickStr(e.ctaLabel, 'VISIT SITE'),
-        ctaHref: pickStr(e.ctaHref ?? e.liveUrl, ''),
+        ctaHref: normalizeExternalUrl(e.ctaHref ?? e.liveUrl),
         ctaAriaLabel: pickStr(e.ctaAriaLabel, ''),
         visible: pickBool(e.visible, true),
       }))
