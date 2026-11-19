@@ -576,6 +576,13 @@ export default function AdminApp() {
     [uploadedMedia]
   )
 
+  const openTab = useCallback((tabId) => {
+    setActiveTab(tabId)
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }, [])
+
   if (sessionState.loading) {
     return (
       <div className="admin-shell">
@@ -771,7 +778,7 @@ export default function AdminApp() {
                   key={tab.id}
                   type="button"
                   className={`admin-nav-item${activeTab === tab.id ? ' active' : ''}`}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => openTab(tab.id)}
                 >
                   <span>{tab.label}</span>
                   {count !== null && (
@@ -786,7 +793,7 @@ export default function AdminApp() {
             <select
               className="admin-select admin-mobile-nav-select"
               value={activeTab}
-              onChange={(e) => setActiveTab(e.target.value)}
+              onChange={(e) => openTab(e.target.value)}
               aria-label="Jump to section"
             >
               {TABS.map((tab) => (
@@ -802,32 +809,115 @@ export default function AdminApp() {
                   <div>
                     <h2>Portfolio Overview</h2>
                     <p>
-                      Everything on your live site updates immediately in
-                      Cloudflare D1 when you click Publish Live.
+                      Click any card below to jump straight into editing that
+                      section—changes go live in Cloudflare D1 when you click
+                      Publish Live.
                     </p>
                   </div>
                 </div>
 
                 <div className="admin-stats-grid">
-                  <div className="admin-stat-card">
-                    <span>Projects (Live / Total)</span>
-                    <strong>
-                      {draft.projects.filter((p) => isProjectLive(p)).length} /{' '}
-                      {draft.projects.length}
-                    </strong>
-                  </div>
-                  <div className="admin-stat-card">
-                    <span>Skill Groups</span>
-                    <strong>{draft.skills.length}</strong>
-                  </div>
-                  <div className="admin-stat-card">
-                    <span>Training Slides</span>
-                    <strong>{draft.training.media.length}</strong>
-                  </div>
-                  <div className="admin-stat-card">
-                    <span>D1 Media Vault</span>
-                    <strong>{formatBytes(totalVaultBytes)}</strong>
-                  </div>
+                  {[
+                    {
+                      tabId: 'projects',
+                      label: 'Projects (Live / Total)',
+                      value: `${draft.projects.filter((p) => isProjectLive(p)).length} / ${draft.projects.length}`,
+                      sub: 'Edit projects & order',
+                    },
+                    {
+                      tabId: 'skills',
+                      label: 'Skill Groups',
+                      value: String(draft.skills.length),
+                      sub: `${draft.skills.reduce((sum, s) => sum + (s.items?.length || 0), 0)} total skills`,
+                    },
+                    {
+                      tabId: 'training',
+                      label: 'Training Slides',
+                      value: String(draft.training.media.length),
+                      sub: `${draft.training.details.length} detail cards`,
+                    },
+                    {
+                      tabId: 'media',
+                      label: 'D1 Media Vault',
+                      value: formatBytes(totalVaultBytes),
+                      sub: `${uploadedMedia.length} uploaded ${uploadedMedia.length === 1 ? 'file' : 'files'}`,
+                    },
+                  ].map((card) => (
+                    <button
+                      key={card.tabId}
+                      type="button"
+                      className="admin-stat-card admin-card-link"
+                      onClick={() => openTab(card.tabId)}
+                    >
+                      <div className="admin-card-top">
+                        <span>{card.label}</span>
+                        <span className="admin-card-arrow" aria-hidden="true">
+                          →
+                        </span>
+                      </div>
+                      <strong>{card.value}</strong>
+                      <span className="admin-card-sub">{card.sub}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="admin-section-links-grid" style={{ marginTop: 18 }}>
+                  {[
+                    {
+                      tabId: 'hero',
+                      title: 'Hero & Brand',
+                      summary: draft.hero.headline,
+                      sub: `${draft.site.navLinks.filter((l) => l.visible !== false).length} nav links • Footer & SEO`,
+                    },
+                    {
+                      tabId: 'about',
+                      title: 'About Section',
+                      summary: draft.about.heading,
+                      sub: `${draft.about.visible !== false ? 'Visible' : 'Hidden'} • ${draft.about.paragraphs.length} paragraphs & portrait`,
+                    },
+                    {
+                      tabId: 'credentials',
+                      title: 'Credentials',
+                      summary: draft.credentialsSection.heading,
+                      sub: `${draft.credentialsSection.visible !== false ? 'Visible' : 'Hidden'} • ${draft.credentials.length} entries`,
+                    },
+                    {
+                      tabId: 'extras',
+                      title: 'Extras & Creative',
+                      summary: draft.extrasSection.heading,
+                      sub: `${draft.extrasSection.visible !== false ? 'Visible' : 'Hidden'} • ${draft.extras.length} showcase ${draft.extras.length === 1 ? 'item' : 'items'}`,
+                    },
+                    {
+                      tabId: 'contact',
+                      title: 'Contact & Socials',
+                      summary: draft.contact.heading,
+                      sub: `${draft.contact.visible !== false ? 'Visible' : 'Hidden'} • ${draft.contact.actions.length} action buttons`,
+                    },
+                    {
+                      tabId: 'security',
+                      title: 'Security & Password',
+                      summary: 'Encrypted Cloudflare Secrets & Cookies',
+                      sub: sessionState.customAdminPath
+                        ? 'Custom stealth path active'
+                        : 'Rotate password hash or path',
+                    },
+                  ].map((card) => (
+                    <button
+                      key={card.tabId}
+                      type="button"
+                      className="admin-section-card admin-card-link"
+                      onClick={() => openTab(card.tabId)}
+                    >
+                      <div className="admin-card-top">
+                        <strong>{card.title}</strong>
+                        <span className="admin-card-arrow" aria-hidden="true">
+                          →
+                        </span>
+                      </div>
+                      <p>{card.summary}</p>
+                      <span className="admin-card-sub">{card.sub}</span>
+                    </button>
+                  ))}
                 </div>
 
                 <div className="admin-item-card" style={{ marginTop: 20 }}>
