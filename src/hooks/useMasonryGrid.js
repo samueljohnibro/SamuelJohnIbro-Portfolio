@@ -3,82 +3,63 @@ import { useCallback, useLayoutEffect } from 'react'
 const DEFAULT_MOBILE_QUERY = '(max-width: 900px)'
 const COLUMN_TIE_TOLERANCE_PX = 1
 
-export function chooseBestColumnAssignments(heights, gap, columnCount = 2) {
+/**
+ * Compute 2-column (or k-column) masonry coordinates while strictly preserving
+ * top-to-bottom, left-to-right reading order:
+ * - Cards never stretch their sibling in the same row.
+ * - Card i+1 can NEVER start higher than card i.
+ * - Left-column cards (even indices) always start strictly below the previous
+ *   row's right-column card, so a later card can never appear left of an
+ *   earlier card.
+ */
+export function computeOrderedMasonryLayout(heights, gap, columnCount = 2) {
   const count = heights.length
-  if (count === 0) return []
-  if (count === 1 || columnCount <= 1) return Array(count).fill(0)
+  if (count === 0) return { positions: [], maxHeight: 0 }
 
-  const greedyPredict = (colHeights) => {
-    let targetCol = 0
-    for (let col = 1; col < columnCount; col += 1) {
-      if (
-        colHeights[col] <
-        colHeights[targetCol] - COLUMN_TIE_TOLERANCE_PX
-      ) {
-        targetCol = col
-      }
-    }
-    return targetCol
-  }
-
-  if (count > 12 || columnCount !== 2) {
-    const colHeights = Array(columnCount).fill(0)
-    return heights.map((height) => {
-      const col = greedyPredict(colHeights)
-      colHeights[col] += height + gap
-      return col
+  if (columnCount <= 1) {
+    let y = 0
+    const positions = heights.map((height) => {
+      const pos = { col: 0, top: y }
+      y += height + gap
+      return pos
     })
+    return { positions, maxHeight: Math.max(0, y - gap) }
   }
 
-  const restCount = count - 2
-  const totalMasks = 1 << restCount
-  let bestAssignments = null
-  let bestMaxHeight = Number.POSITIVE_INFINITY
-  let bestImbalance = Number.POSITIVE_INFINITY
-  let bestGreedyMatches = -1
+  const columnHeights = Array(columnCount).fill(0)
+  const positions = []
 
-  for (let mask = 0; mask < totalMasks; mask += 1) {
-    const colHeights = [heights[0] + gap, heights[1] + gap]
-    const candidate = [0, 1]
-    let greedyMatches = 2
+  for (let index = 0; index < count; index += 1) {
+    const col = index % columnCount
+    let top = columnHeights[col]
 
-    for (let bit = 0; bit < restCount; bit += 1) {
-      const cardIndex = bit + 2
-      const greedyCol = greedyPredict(colHeights)
-      const col = (mask >> bit) & 1
-
-      if (col === greedyCol) {
-        greedyMatches += 1
+    if (index > 0) {
+      const prev = positions[index - 1]
+      if (col === 0) {
+        if (top <= prev.top + COLUMN_TIE_TOLERANCE_PX) {
+          top = Math.max(top, columnHeights[prev.col])
+        }
+      } else {
+        top = Math.max(top, prev.top)
       }
-
-      candidate.push(col)
-      colHeights[col] += heights[cardIndex] + gap
     }
 
-    const finalCol0 = colHeights[0] > 0 ? colHeights[0] - gap : 0
-    const finalCol1 = colHeights[1] > 0 ? colHeights[1] - gap : 0
-    const maxHeight = Math.max(finalCol0, finalCol1)
-    const imbalance = Math.abs(finalCol0 - finalCol1)
-
-    const isStrictlyShorter =
-      maxHeight < bestMaxHeight - COLUMN_TIE_TOLERANCE_PX
-    const isNearTieHeight =
-      Math.abs(maxHeight - bestMaxHeight) <= COLUMN_TIE_TOLERANCE_PX
-    const isBetterTieBreak =
-      isNearTieHeight &&
-      (imbalance < bestImbalance - COLUMN_TIE_TOLERANCE_PX ||
-        (Math.abs(imbalance - bestImbalance) <= COLUMN_TIE_TOLERANCE_PX &&
-          greedyMatches > bestGreedyMatches))
-
-    if (isStrictlyShorter || isBetterTieBreak) {
-      bestMaxHeight = maxHeight
-      bestImbalance = imbalance
-      bestGreedyMatches = greedyMatches
-      bestAssignments = candidate
-    }
+    positions.push({ col, top })
+    columnHeights[col] = top + heights[index] + gap
   }
 
-  return bestAssignments
+  const maxHeight = Math.max(
+    0,
+    ...columnHeights.map((colHeight) => (colHeight > 0 ? colHeight - gap : 0))
+  )
+
+  return { positions, maxHeight }
+}
+
+export function chooseBestColumnAssignments(heights, gap, columnCount = 2) {
+  return computeOrderedMasonryLayout(heights, gap, columnCount).positions.map(
+    (pos) => pos.col
+  )
 }
 
 /**
@@ -146,14 +127,16 @@ export function useMasonryGrid({
     })
 
     const heights = cards.map((card) => card.getBoundingClientRect().height)
-    const assignments = chooseBestColumnAssignments(heights, gap, columnCount)
-    const columnHeights = Array(columnCount).fill(0)
+    const { positions, maxHeight } = computeOrderedMasonryLayout(
+      heights,
+      gap,
+      columnCount
+    )
 
     cards.forEach((card, index) => {
-      const targetColumn = assignments[index] ?? 0
-      const nextLeft = `${targetColumn * (columnWidth + gap)}px`
-      const y = columnHeights[targetColumn]
-      const nextTop = `${y}px`
+      const pos = positions[index] || { col: 0, top: 0 }
+      const nextLeft = `${pos.col * (columnWidth + gap)}px`
+      const nextTop = `${pos.top}px`
 
       if (card.style.left !== nextLeft) {
         card.style.left = nextLeft
@@ -161,14 +144,8 @@ export function useMasonryGrid({
       if (card.style.top !== nextTop) {
         card.style.top = nextTop
       }
-
-      columnHeights[targetColumn] = y + heights[index] + gap
     })
 
-    const maxHeight = Math.max(
-      0,
-      ...columnHeights.map((colHeight) => (colHeight > 0 ? colHeight - gap : 0))
-    )
     const nextHeight = `${Math.ceil(maxHeight)}px`
     if (grid.style.height !== nextHeight) {
       grid.style.height = nextHeight
