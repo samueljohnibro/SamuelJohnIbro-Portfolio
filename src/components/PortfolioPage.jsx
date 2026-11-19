@@ -238,6 +238,7 @@ export function PortfolioPage({
   const [reviewModalState, setReviewModalState] = useState({
     open: false,
     target: 'overall',
+    lockTarget: false,
     sessionKey: 0,
   })
   const isClientReady = useSyncExternalStore(
@@ -348,6 +349,7 @@ export function PortfolioPage({
             setReviewModalState({
               open: true,
               target,
+              lockTarget: false,
               sessionKey: Date.now(),
             })
             requestAnimationFrame(() => {
@@ -363,6 +365,7 @@ export function PortfolioPage({
           setReviewModalState({
             open: true,
             target: urlTarget,
+            lockTarget: urlTarget !== 'overall',
             sessionKey: 1,
           })
         })
@@ -473,15 +476,24 @@ export function PortfolioPage({
   }, [])
 
   const handleOpenWriteReview = useCallback(
-    (target = 'overall', triggerElement = null) => {
+    (target = 'overall', triggerElement = null, options = {}) => {
       previewReturnFocusRef.current = triggerElement || null
+      const resolvedTarget = target || 'overall'
       setReviewModalState((prev) => ({
         open: true,
-        target: target || 'overall',
+        target: resolvedTarget,
+        lockTarget: Boolean(options?.lockTarget && resolvedTarget !== 'overall'),
         sessionKey: prev.sessionKey + 1,
       }))
     },
     []
+  )
+
+  const handleOpenProjectReview = useCallback(
+    (projectId, triggerElement = null) => {
+      handleOpenWriteReview(projectId, triggerElement, { lockTarget: true })
+    },
+    [handleOpenWriteReview]
   )
 
   const handleCloseReviewModal = useCallback(() => {
@@ -1586,7 +1598,7 @@ export function PortfolioPage({
             }
             reviewsByTarget={reviewsSummary?.byTarget}
             onViewProjectReviews={handleViewProjectReviews}
-            onReviewProject={handleOpenWriteReview}
+            onReviewProject={handleOpenProjectReview}
           />
         </section>
       )}
@@ -1853,6 +1865,7 @@ export function PortfolioPage({
           onClose={handleCloseReviewModal}
           projects={sortedProjects}
           initialTarget={reviewModalState.target}
+          lockTarget={reviewModalState.lockTarget}
           inviteCode={inviteCode}
           inviteInfo={inviteInfo}
           challengeToken={reviewChallengeToken}

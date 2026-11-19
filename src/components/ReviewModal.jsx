@@ -27,6 +27,7 @@ export function ReviewModal({
   onClose,
   projects = [],
   initialTarget = 'overall',
+  lockTarget = false,
   inviteCode = '',
   inviteInfo = null,
   challengeToken = '',
@@ -58,8 +59,11 @@ export function ReviewModal({
     return 'overall'
   }, [initialTarget, inviteInfo, projects])
 
+  const isTargetLocked = Boolean(lockTarget && defaultTargetId !== 'overall')
   const [selectedTargetOverride, setSelectedTargetOverride] = useState(null)
-  const selectedTarget = selectedTargetOverride ?? defaultTargetId
+  const selectedTarget = isTargetLocked
+    ? defaultTargetId
+    : (selectedTargetOverride ?? defaultTargetId)
   const [rating, setRating] = useState(5)
   const [reviewerName, setReviewerName] = useState('')
   const [reviewerRole, setReviewerRole] = useState('')
@@ -391,51 +395,67 @@ export function ReviewModal({
                 </div>
               )}
 
-              <div className="review-form-group">
-                <span className="review-field-label">
-                  What are you reviewing?
-                </span>
-                <div
-                  className="review-target-pills"
-                  role="radiogroup"
-                  aria-label="Choose what to review"
-                >
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={selectedTarget === 'overall'}
-                    className={`review-target-pill${selectedTarget === 'overall' ? ' is-selected' : ''}`}
-                    onClick={() => setSelectedTargetOverride('overall')}
-                    disabled={submitting}
+              {isTargetLocked && activeProject ? (
+                <div className="review-locked-target">
+                  <span className="review-locked-target-label">
+                    Reviewing project
+                  </span>
+                  <strong className="review-locked-target-title">
+                    {activeProject.title}
+                  </strong>
+                  {activeProject.status && (
+                    <span className="review-locked-target-status">
+                      {activeProject.status}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="review-form-group">
+                  <span className="review-field-label">
+                    What are you reviewing?
+                  </span>
+                  <div
+                    className="review-target-pills"
+                    role="radiogroup"
+                    aria-label="Choose what to review"
                   >
-                    <span className="review-target-pill-title">
-                      Samuel John-Ibro (Overall)
-                    </span>
-                    <span className="review-target-pill-sub">
-                      Engineering, QA &amp; collaboration
-                    </span>
-                  </button>
-
-                  {projects.map((project) => (
                     <button
-                      key={project.id}
                       type="button"
                       role="radio"
-                      aria-checked={selectedTarget === project.id}
-                      className={`review-target-pill${selectedTarget === project.id ? ' is-selected' : ''}`}
-                      onClick={() => setSelectedTargetOverride(project.id)}
+                      aria-checked={selectedTarget === 'overall'}
+                      className={`review-target-pill${selectedTarget === 'overall' ? ' is-selected' : ''}`}
+                      onClick={() => setSelectedTargetOverride('overall')}
                       disabled={submitting}
                     >
                       <span className="review-target-pill-title">
-                        {project.title}
+                        Samuel John-Ibro (Overall)
                       </span>
                       <span className="review-target-pill-sub">
-                        {project.status || 'Project'}
+                        Engineering, QA &amp; collaboration
                       </span>
                     </button>
-                  ))}
+
+                    {projects.map((project) => (
+                      <button
+                        key={project.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selectedTarget === project.id}
+                        className={`review-target-pill${selectedTarget === project.id ? ' is-selected' : ''}`}
+                        onClick={() => setSelectedTargetOverride(project.id)}
+                        disabled={submitting}
+                      >
+                        <span className="review-target-pill-title">
+                          {project.title}
+                        </span>
+                        <span className="review-target-pill-sub">
+                          {project.status || 'Project'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="review-form-group">
                 <span className="review-field-label">5-Star Rating *</span>

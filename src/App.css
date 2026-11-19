@@ -3992,6 +3992,48 @@ main {
   gap: 8px;
 }
 
+.review-locked-target {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(200, 155, 60, 0.36);
+  background: linear-gradient(
+    145deg,
+    rgba(110, 20, 41, 0.24),
+    rgba(200, 155, 60, 0.08)
+  );
+}
+
+.review-locked-target-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.review-locked-target-title {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.review-locked-target-status {
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(200, 155, 60, 0.38);
+  background: rgba(200, 155, 60, 0.12);
+  color: #f3dfb0;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .review-target-pill {
   padding: 10px 12px;
   border-radius: 12px;
