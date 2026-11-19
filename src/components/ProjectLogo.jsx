@@ -1,10 +1,26 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { resolveProjectLogo } from '../data/defaultPortfolio.js'
 
 function ProjectLogoInner({ resolved, className, size }) {
   const [candidateIndex, setCandidateIndex] = useState(0)
+  const imgRef = useRef(null)
   const candidates = resolved.candidates || []
   const currentSrc = candidates[candidateIndex]
+
+  useEffect(() => {
+    const img = imgRef.current
+    if (!img || !img.complete) return undefined
+    const failedBeforeHydration =
+      img.naturalWidth === 0 ||
+      (img.naturalWidth === 1 &&
+        img.naturalHeight === 1 &&
+        candidateIndex + 1 < candidates.length)
+    if (!failedBeforeHydration) return undefined
+    const timer = window.setTimeout(() => {
+      setCandidateIndex((idx) => (idx === candidateIndex ? idx + 1 : idx))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [candidateIndex, candidates.length, currentSrc])
 
   if (!currentSrc) {
     return null
@@ -16,6 +32,7 @@ function ProjectLogoInner({ resolved, className, size }) {
       data-auto-favicon={resolved.isFallbackFavicon ? 'true' : undefined}
     >
       <img
+        ref={imgRef}
         src={currentSrc}
         alt={resolved.alt}
         width={size}
@@ -63,7 +80,23 @@ export function ProjectLogo({
 
 function FaviconCandidateImgInner({ candidates, alt, fallback, style, className }) {
   const [candidateIndex, setCandidateIndex] = useState(0)
+  const imgRef = useRef(null)
   const currentSrc = candidates[candidateIndex]
+
+  useEffect(() => {
+    const img = imgRef.current
+    if (!img || !img.complete) return undefined
+    const failedBeforeHydration =
+      img.naturalWidth === 0 ||
+      (img.naturalWidth === 1 &&
+        img.naturalHeight === 1 &&
+        candidateIndex + 1 < candidates.length)
+    if (!failedBeforeHydration) return undefined
+    const timer = window.setTimeout(() => {
+      setCandidateIndex((idx) => (idx === candidateIndex ? idx + 1 : idx))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [candidateIndex, candidates.length, currentSrc])
 
   if (!currentSrc) {
     return fallback
@@ -71,6 +104,7 @@ function FaviconCandidateImgInner({ candidates, alt, fallback, style, className 
 
   return (
     <img
+      ref={imgRef}
       src={currentSrc}
       alt={alt}
       style={style}

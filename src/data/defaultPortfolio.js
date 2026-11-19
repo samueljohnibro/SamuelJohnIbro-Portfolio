@@ -656,11 +656,12 @@ export function buildFaviconCandidates(rawUrl) {
   if (!parsed) return []
   return [
     `/api/favicon?url=${encodeURIComponent(parsed.href)}`,
-    `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(parsed.origin)}`,
-    `https://icons.duckduckgo.com/ip3/${encodeURIComponent(parsed.hostname)}.ico`,
-    `${parsed.origin}/favicon.ico`,
-    `${parsed.origin}/favicon.png`,
     `${parsed.origin}/apple-touch-icon.png`,
+    `${parsed.origin}/favicon.svg`,
+    `${parsed.origin}/favicon.png`,
+    `${parsed.origin}/favicon.ico`,
+    `https://icons.duckduckgo.com/ip3/${encodeURIComponent(parsed.hostname)}.ico`,
+    `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(parsed.origin)}`,
   ]
 }
 

@@ -1625,8 +1625,8 @@ async function discoverSiteFaviconCandidates(targetParsed) {
   }
 
   allCandidates.push(
-    `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(finalOrigin)}`,
-    `https://icons.duckduckgo.com/ip3/${encodeURIComponent(finalHostname)}.ico`
+    `https://icons.duckduckgo.com/ip3/${encodeURIComponent(finalHostname)}.ico`,
+    `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(finalOrigin)}`
   )
 
   const deduplicated = []
