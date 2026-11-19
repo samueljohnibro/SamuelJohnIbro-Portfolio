@@ -337,7 +337,7 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     }
 
     const handleResize = () => {
-      if (window.innerWidth > 768) {
+      if (window.innerWidth > 900) {
         setIsNavOpen(false)
       }
     }
@@ -877,14 +877,8 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
 
           @media (max-width: 900px) {
             .portfolio-app .navbar {
-              padding: 18px max(24px, calc(50% - var(--max-width) / 2));
-            }
-          }
-
-          @media (max-width: 768px) {
-            .portfolio-app .navbar {
               width: 100%;
-              padding: 16px max(16px, calc(50% - var(--max-width) / 2));
+              padding: 16px max(24px, calc(50% - var(--max-width) / 2));
             }
 
             .portfolio-app .nav-toggle {
@@ -896,7 +890,8 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
               top: 0;
               left: 0;
               width: 100vw;
-              height: 100vh;
+              height: 100dvh;
+              overflow-y: auto;
               background: rgba(10, 10, 10, 0.96);
               backdrop-filter: blur(22px);
               -webkit-backdrop-filter: blur(22px);
@@ -932,6 +927,12 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
               color: var(--accent);
               background: rgba(110, 20, 41, 0.22);
               transform: translateX(4px);
+            }
+          }
+
+          @media (max-width: 768px) {
+            .portfolio-app .navbar {
+              padding: 16px max(16px, calc(50% - var(--max-width) / 2));
             }
 
             .portfolio-app .hero-section {

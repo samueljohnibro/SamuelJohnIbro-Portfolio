@@ -252,6 +252,7 @@ export default function AdminApp() {
   const [loginBusy, setLoginBusy] = useState(false)
 
   const [activeTab, setActiveTab] = useState('overview')
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [draft, setDraft] = useState(() => clonePortfolioData(DEFAULT_PORTFOLIO))
   const [publishedJson, setPublishedJson] = useState(() =>
     JSON.stringify(DEFAULT_PORTFOLIO)
@@ -578,10 +579,41 @@ export default function AdminApp() {
 
   const openTab = useCallback((tabId) => {
     setActiveTab(tabId)
+    setIsMobileMenuOpen(false)
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' })
     }
   }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsMobileMenuOpen(false)
+      }
+    }
+
+    const handleResize = () => {
+      if (window.innerWidth > 960) {
+        setIsMobileMenuOpen(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('resize', handleResize)
+
+    return () => {
+      document.body.style.overflow = ''
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [isMobileMenuOpen])
 
   if (sessionState.loading) {
     return (
@@ -700,6 +732,19 @@ export default function AdminApp() {
     )
   }
 
+  const activeTabLabel =
+    TABS.find((t) => t.id === activeTab)?.label || 'Overview'
+
+  const getTabCount = (tabId) => {
+    if (tabId === 'projects') return draft.projects.length
+    if (tabId === 'skills') return draft.skills.length
+    if (tabId === 'training') return draft.training.media.length
+    if (tabId === 'credentials') return draft.credentials.length
+    if (tabId === 'extras') return draft.extras.length
+    if (tabId === 'media') return uploadedMedia.length
+    return null
+  }
+
   return (
     <div className="admin-shell">
       <SpaceBackground />
@@ -707,14 +752,22 @@ export default function AdminApp() {
       <div className="admin-workspace">
         <header className="admin-topbar">
           <div className="admin-topbar-left">
-            <div className="admin-topbar-title">
-              <strong>{draft.site.brandName || 'Portfolio'} — Admin Studio</strong>
-              <span>
-                {updatedAt
-                  ? `Last published ${new Date(updatedAt).toLocaleString()}`
-                  : 'Connected to Cloudflare D1'}
-              </span>
-            </div>
+            <button
+              type="button"
+              className="admin-topbar-brand"
+              onClick={() => openTab('overview')}
+              title="Back to Portfolio Overview"
+            >
+              <span className="brand-orbit-icon" aria-hidden="true" />
+              <div className="admin-topbar-title">
+                <strong>{draft.site.brandName || 'Portfolio'} — Admin Studio</strong>
+                <span>
+                  {updatedAt
+                    ? `Last published ${new Date(updatedAt).toLocaleString()}`
+                    : 'Connected to Cloudflare D1'}
+                </span>
+              </div>
+            </button>
 
             <span
               className={`admin-status-pill ${isDirty ? 'is-dirty' : 'is-synced'}`}
@@ -760,19 +813,124 @@ export default function AdminApp() {
               Lock & Sign Out
             </button>
           </div>
+
+          <div className="admin-topbar-mobile-right">
+            {isDirty && (
+              <button
+                type="button"
+                className="admin-btn admin-btn-sm admin-btn-primary"
+                disabled={isSaving}
+                onClick={handlePublish}
+              >
+                {isSaving ? 'Saving...' : 'Publish'}
+              </button>
+            )}
+
+            <button
+              type="button"
+              className={`admin-nav-toggle${isMobileMenuOpen ? ' active' : ''}`}
+              onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+              aria-label={
+                isMobileMenuOpen
+                  ? 'Close admin navigation menu'
+                  : 'Open admin navigation menu'
+              }
+              aria-expanded={isMobileMenuOpen}
+            >
+              <span className="admin-nav-toggle-bar" />
+              <span className="admin-nav-toggle-bar" />
+              <span className="admin-nav-toggle-bar" />
+            </button>
+          </div>
         </header>
+
+        <div
+          className={`admin-mobile-drawer${isMobileMenuOpen ? ' is-open' : ''}`}
+          aria-hidden={!isMobileMenuOpen}
+        >
+          <div className="admin-mobile-drawer-inner">
+            <div className="admin-mobile-drawer-head">
+              <span>Studio Navigation</span>
+              <span
+                className={`admin-status-pill ${isDirty ? 'is-dirty' : 'is-synced'}`}
+              >
+                {isDirty ? 'Unsaved draft' : 'Live & synced'}
+              </span>
+            </div>
+
+            <nav className="admin-mobile-drawer-nav" aria-label="Admin sections">
+              {TABS.map((tab) => {
+                const count = getTabCount(tab.id)
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`admin-nav-item${activeTab === tab.id ? ' active' : ''}`}
+                    onClick={() => openTab(tab.id)}
+                  >
+                    <span>{tab.label}</span>
+                    {count !== null && (
+                      <span className="admin-nav-count">{count}</span>
+                    )}
+                  </button>
+                )
+              })}
+            </nav>
+
+            <div className="admin-mobile-drawer-actions">
+              <button
+                type="button"
+                className="admin-btn admin-btn-primary"
+                disabled={isSaving || !isDirty}
+                onClick={() => {
+                  setIsMobileMenuOpen(false)
+                  handlePublish()
+                }}
+              >
+                {isSaving ? 'Publishing...' : 'Publish Live'}
+              </button>
+
+              {isDirty && (
+                <button
+                  type="button"
+                  className="admin-btn"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false)
+                    handleDiscard()
+                  }}
+                >
+                  Discard Unsaved Edits
+                </button>
+              )}
+
+              <a
+                href="/"
+                target="_blank"
+                rel="noreferrer"
+                className="admin-btn"
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                View Live Site ↗
+              </a>
+
+              <button
+                type="button"
+                className="admin-btn admin-btn-danger"
+                onClick={() => {
+                  setIsMobileMenuOpen(false)
+                  handleLogout()
+                }}
+              >
+                Lock & Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
 
         <div className="admin-body">
           <aside className="admin-sidebar" aria-label="Admin sections">
             {TABS.map((tab) => {
-              let count = null
-              if (tab.id === 'projects') count = draft.projects.length
-              if (tab.id === 'skills') count = draft.skills.length
-              if (tab.id === 'training') count = draft.training.media.length
-              if (tab.id === 'credentials') count = draft.credentials.length
-              if (tab.id === 'extras') count = draft.extras.length
-              if (tab.id === 'media') count = uploadedMedia.length
-
+              const count = getTabCount(tab.id)
               return (
                 <button
                   key={tab.id}
@@ -790,18 +948,26 @@ export default function AdminApp() {
           </aside>
 
           <main className="admin-main">
-            <select
-              className="admin-select admin-mobile-nav-select"
-              value={activeTab}
-              onChange={(e) => openTab(e.target.value)}
-              aria-label="Jump to section"
-            >
-              {TABS.map((tab) => (
-                <option key={tab.id} value={tab.id}>
-                  {tab.label}
-                </option>
-              ))}
-            </select>
+            <div className="admin-mobile-breadcrumb">
+              {activeTab !== 'overview' ? (
+                <button
+                  type="button"
+                  className="admin-btn admin-btn-sm"
+                  onClick={() => openTab('overview')}
+                >
+                  ← Overview
+                </button>
+              ) : (
+                <span className="admin-mobile-crumb-label">Dashboard</span>
+              )}
+              <button
+                type="button"
+                className="admin-btn admin-btn-sm admin-btn-gold"
+                onClick={() => setIsMobileMenuOpen(true)}
+              >
+                {activeTabLabel} ☰
+              </button>
+            </div>
 
             {activeTab === 'overview' && (
               <section className="admin-panel">
