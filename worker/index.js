@@ -464,6 +464,9 @@ function validatePortfolioUrls(data) {
   for (const media of data.training?.media || []) {
     check(media.src || '', false)
   }
+  for (const cred of data.credentials || []) {
+    if (cred.attachment?.src) check(cred.attachment.src, false)
+  }
   for (const extra of data.extras || []) {
     check(extra.liveUrl || '', false)
     check(extra.ctaHref || '', true)

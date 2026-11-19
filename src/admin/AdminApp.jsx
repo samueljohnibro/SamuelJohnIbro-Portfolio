@@ -2567,6 +2567,7 @@ export default function AdminApp() {
                               title: 'New Credential',
                               institution: '',
                               description: '',
+                              attachment: null,
                               visible: true,
                             },
                           ],
@@ -2681,63 +2682,213 @@ export default function AdminApp() {
                       </div>
 
                       <div className="admin-grid-3">
-                        <input
-                          className="admin-input"
-                          value={cred.label}
-                          onChange={(e) =>
-                            setDraft((d) => ({
-                              ...d,
-                              credentials: d.credentials.map((c, i) =>
-                                i === idx ? { ...c, label: e.target.value } : c
-                              ),
-                            }))
-                          }
-                          placeholder="Label (DEGREE, CERTIFICATION)"
-                        />
-                        <input
-                          className="admin-input"
-                          value={cred.title}
-                          onChange={(e) =>
-                            setDraft((d) => ({
-                              ...d,
-                              credentials: d.credentials.map((c, i) =>
-                                i === idx ? { ...c, title: e.target.value } : c
-                              ),
-                            }))
-                          }
-                          placeholder="Title"
-                        />
-                        <input
-                          className="admin-input"
-                          value={cred.institution}
+                        <div className="admin-field">
+                          <label
+                            className="admin-field-label"
+                            htmlFor={`cred-label-${cred.id}`}
+                          >
+                            Category Badge
+                          </label>
+                          <input
+                            id={`cred-label-${cred.id}`}
+                            className="admin-input"
+                            value={cred.label ?? ''}
+                            onChange={(e) =>
+                              setDraft((d) => ({
+                                ...d,
+                                credentials: d.credentials.map((c, i) =>
+                                  i === idx ? { ...c, label: e.target.value } : c
+                                ),
+                              }))
+                            }
+                            placeholder="DEGREE, CERTIFICATION..."
+                          />
+                        </div>
+
+                        <div className="admin-field">
+                          <label
+                            className="admin-field-label"
+                            htmlFor={`cred-title-${cred.id}`}
+                          >
+                            Credential Title
+                          </label>
+                          <input
+                            id={`cred-title-${cred.id}`}
+                            className="admin-input"
+                            value={cred.title ?? ''}
+                            onChange={(e) =>
+                              setDraft((d) => ({
+                                ...d,
+                                credentials: d.credentials.map((c, i) =>
+                                  i === idx ? { ...c, title: e.target.value } : c
+                                ),
+                              }))
+                            }
+                            placeholder="e.g. B.Sc. Software Engineering"
+                          />
+                        </div>
+
+                        <div className="admin-field">
+                          <label
+                            className="admin-field-label"
+                            htmlFor={`cred-inst-${cred.id}`}
+                          >
+                            Institution / Issuer
+                          </label>
+                          <input
+                            id={`cred-inst-${cred.id}`}
+                            className="admin-input"
+                            value={cred.institution ?? ''}
+                            onChange={(e) =>
+                              setDraft((d) => ({
+                                ...d,
+                                credentials: d.credentials.map((c, i) =>
+                                  i === idx
+                                    ? { ...c, institution: e.target.value }
+                                    : c
+                                ),
+                              }))
+                            }
+                            placeholder="Institution / Issuer"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="admin-field">
+                        <label
+                          className="admin-field-label"
+                          htmlFor={`cred-desc-${cred.id}`}
+                        >
+                          Description
+                        </label>
+                        <textarea
+                          id={`cred-desc-${cred.id}`}
+                          className="admin-textarea"
+                          value={cred.description ?? ''}
                           onChange={(e) =>
                             setDraft((d) => ({
                               ...d,
                               credentials: d.credentials.map((c, i) =>
                                 i === idx
-                                  ? { ...c, institution: e.target.value }
+                                  ? { ...c, description: e.target.value }
                                   : c
                               ),
                             }))
                           }
-                          placeholder="Institution / Issuer"
                         />
                       </div>
 
-                      <textarea
-                        className="admin-textarea"
-                        value={cred.description}
-                        onChange={(e) =>
+                      <MediaField
+                        label="Certificate or Badge (Image or PDF)"
+                        value={cred.attachment?.src || ''}
+                        accept="image/*,application/pdf"
+                        allowPdf
+                        forcedType={cred.attachment?.type || null}
+                        allowClear
+                        placeholder="Upload image/PDF, pick from Library, or paste URL..."
+                        onChange={(src, detectedType) =>
                           setDraft((d) => ({
                             ...d,
-                            credentials: d.credentials.map((c, i) =>
-                              i === idx
-                                ? { ...c, description: e.target.value }
-                                : c
-                            ),
+                            credentials: d.credentials.map((c, i) => {
+                              if (i !== idx) return c
+                              if (!src) {
+                                return { ...c, attachment: null }
+                              }
+                              const resolvedType =
+                                detectedType === 'pdf' || detectedType === 'image'
+                                  ? detectedType
+                                  : /\.pdf(\?|$|#)/i.test(src)
+                                    ? 'pdf'
+                                    : c.attachment?.type || 'image'
+                              return {
+                                ...c,
+                                attachment: {
+                                  src,
+                                  type: resolvedType,
+                                  label:
+                                    c.attachment?.label ||
+                                    (resolvedType === 'pdf'
+                                      ? 'View Certificate (PDF)'
+                                      : 'View Certificate'),
+                                },
+                              }
+                            }),
                           }))
                         }
+                        uploadedMedia={uploadedMedia}
+                        onMediaUploaded={(file) =>
+                          setUploadedMedia((prev) => [file, ...prev])
+                        }
+                        onNotify={notify}
                       />
+
+                      {cred.attachment?.src && (
+                        <div className="admin-grid-2">
+                          <div className="admin-field">
+                            <label
+                              className="admin-field-label"
+                              htmlFor={`cred-attach-type-${cred.id}`}
+                            >
+                              Attachment Format
+                            </label>
+                            <select
+                              id={`cred-attach-type-${cred.id}`}
+                              className="admin-select"
+                              value={cred.attachment.type || 'image'}
+                              onChange={(e) =>
+                                setDraft((d) => ({
+                                  ...d,
+                                  credentials: d.credentials.map((c, i) =>
+                                    i === idx && c.attachment
+                                      ? {
+                                          ...c,
+                                          attachment: {
+                                            ...c.attachment,
+                                            type: e.target.value,
+                                          },
+                                        }
+                                      : c
+                                  ),
+                                }))
+                              }
+                            >
+                              <option value="image">Image / Badge</option>
+                              <option value="pdf">PDF Document</option>
+                            </select>
+                          </div>
+
+                          <div className="admin-field">
+                            <label
+                              className="admin-field-label"
+                              htmlFor={`cred-attach-label-${cred.id}`}
+                            >
+                              Public Card Button Label
+                            </label>
+                            <input
+                              id={`cred-attach-label-${cred.id}`}
+                              className="admin-input"
+                              value={cred.attachment.label ?? ''}
+                              onChange={(e) =>
+                                setDraft((d) => ({
+                                  ...d,
+                                  credentials: d.credentials.map((c, i) =>
+                                    i === idx && c.attachment
+                                      ? {
+                                          ...c,
+                                          attachment: {
+                                            ...c.attachment,
+                                            label: e.target.value,
+                                          },
+                                        }
+                                      : c
+                                  ),
+                                }))
+                              }
+                              placeholder="View Certificate"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
 

@@ -12,6 +12,7 @@ import {
   resolveHeadlineParts,
   sortProjectsByStatusAndTimeline,
 } from '../data/defaultPortfolio.js'
+import { CredentialModal } from './CredentialModal.jsx'
 import { ProjectPreviewModal, ProjectSitePreview } from './ProjectPreview.jsx'
 import { ProjectsGrid } from './ProjectsGrid.jsx'
 import { SpaceBackground } from './SpaceBackground.jsx'
@@ -195,6 +196,7 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
   )
   const [isNavOpen, setIsNavOpen] = useState(false)
   const [expandedProject, setExpandedProject] = useState(null)
+  const [expandedCredential, setExpandedCredential] = useState(null)
 
   const heroText = portfolio.hero.headline || DEFAULT_PORTFOLIO.hero.headline
   const staticHeroMode =
@@ -286,6 +288,22 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     }
   }, [])
 
+  const handleOpenCredential = useCallback((credential, triggerElement) => {
+    previewReturnFocusRef.current = triggerElement || null
+    setExpandedCredential(credential)
+  }, [])
+
+  const handleCloseCredential = useCallback(() => {
+    setExpandedCredential(null)
+    const triggerEl = previewReturnFocusRef.current
+    previewReturnFocusRef.current = null
+    if (triggerEl && typeof triggerEl.focus === 'function') {
+      requestAnimationFrame(() => {
+        triggerEl.focus()
+      })
+    }
+  }, [])
+
   const handleCardPointerMove = useCallback((event) => {
     if (event.pointerType === 'touch') return
     const card = event.target.closest(
@@ -300,7 +318,7 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
   }, [])
 
   useEffect(() => {
-    if (isNavOpen || expandedProject) {
+    if (isNavOpen || expandedProject || expandedCredential) {
       document.body.style.overflow = 'hidden'
     } else {
       document.body.style.overflow = ''
@@ -308,7 +326,9 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
-        if (expandedProject) {
+        if (expandedCredential) {
+          handleCloseCredential()
+        } else if (expandedProject) {
           handleClosePreview()
         } else {
           setIsNavOpen(false)
@@ -330,7 +350,13 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('resize', handleResize)
     }
-  }, [isNavOpen, expandedProject, handleClosePreview])
+  }, [
+    isNavOpen,
+    expandedProject,
+    expandedCredential,
+    handleClosePreview,
+    handleCloseCredential,
+  ])
 
   useEffect(() => {
     const heroElement = heroSectionRef.current
@@ -1296,16 +1322,68 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           <h2>{portfolio.credentialsSection.heading}</h2>
 
           <div className="credentials-grid">
-            {visibleCredentials.map((cred) => (
-              <article key={cred.id} className="credential-card">
-                <p className="credential-label">{cred.label}</p>
-                <h3>{cred.title}</h3>
-                {cred.institution && (
-                  <p className="credential-institution">{cred.institution}</p>
-                )}
-                <p>{cred.description}</p>
-              </article>
-            ))}
+            {visibleCredentials.map((cred) => {
+              const attach = cred.attachment?.src ? cred.attachment : null
+              const isPdf = attach?.type === 'pdf'
+              const attachLabel =
+                attach?.label ||
+                (isPdf ? 'View Certificate (PDF)' : 'View Certificate')
+
+              return (
+                <article key={cred.id} className="credential-card">
+                  <p className="credential-label">{cred.label}</p>
+                  <h3>{cred.title}</h3>
+                  {cred.institution && (
+                    <p className="credential-institution">{cred.institution}</p>
+                  )}
+                  <p className="credential-description">{cred.description}</p>
+
+                  {attach && (
+                    <div className="credential-attachment">
+                      {isPdf ? (
+                        <button
+                          type="button"
+                          className="credential-pdf-card"
+                          onClick={(e) =>
+                            handleOpenCredential(cred, e.currentTarget)
+                          }
+                        >
+                          <span className="credential-pdf-badge">PDF</span>
+                          <span className="credential-pdf-meta">
+                            <strong>{attachLabel}</strong>
+                            <span>Click to preview certificate</span>
+                          </span>
+                          <span
+                            className="credential-pdf-expand"
+                            aria-hidden="true"
+                          >
+                            ⤢
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="credential-attachment-preview"
+                          onClick={(e) =>
+                            handleOpenCredential(cred, e.currentTarget)
+                          }
+                          aria-label={`Inspect ${cred.title} certificate or badge`}
+                        >
+                          <img
+                            src={attach.src}
+                            alt={`${cred.title} certificate or badge`}
+                            loading="lazy"
+                          />
+                          <span className="credential-attachment-hint">
+                            {attachLabel} ⤢
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </article>
+              )
+            })}
           </div>
 
           {portfolio.credentialsSection.summary && (
@@ -1451,6 +1529,14 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           key={expandedProject.id}
           project={expandedProject}
           onClose={handleClosePreview}
+        />
+      )}
+
+      {expandedCredential && (
+        <CredentialModal
+          key={expandedCredential.id}
+          credential={expandedCredential}
+          onClose={handleCloseCredential}
         />
       )}
     </main>

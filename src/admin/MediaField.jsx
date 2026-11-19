@@ -8,6 +8,8 @@ export function MediaField({
   onChange,
   accept = 'image/*',
   allowVideo = false,
+  allowPdf = false,
+  forcedType = null,
   allowClear = false,
   placeholder = 'https://... or /media/... or /assets/...',
   uploadedMedia = [],
@@ -29,9 +31,12 @@ export function MediaField({
     try {
       const uploaded = await uploadMediaFile(file, setProgress)
       onMediaUploaded?.(uploaded)
-      const detectedType = uploaded.mimeType.startsWith('video/')
-        ? 'video'
-        : 'image'
+      let detectedType = 'image'
+      if (uploaded.mimeType === 'application/pdf') {
+        detectedType = 'pdf'
+      } else if (uploaded.mimeType.startsWith('video/')) {
+        detectedType = 'video'
+      }
       onChange(uploaded.url, detectedType)
       onNotify?.(`Uploaded "${uploaded.filename}"`, 'success')
     } catch (error) {
@@ -47,14 +52,24 @@ export function MediaField({
     typeof value === 'string' &&
     /\.(mp4|webm|mov)(\?|$)/i.test(value)
 
+  const isPdfPreview =
+    allowPdf &&
+    (forcedType === 'pdf' ||
+      (typeof value === 'string' && /\.pdf(\?|$|#)/i.test(value)))
+
   const combinedLibrary = [
-    ...uploadedMedia.map((f) => ({
-      id: f.id,
-      label: f.filename,
-      src: f.url,
-      type: f.mimeType?.startsWith('video/') ? 'video' : 'image',
-      badge: `Uploaded (${formatBytes(f.byteSize)})`,
-    })),
+    ...uploadedMedia.map((f) => {
+      let type = 'image'
+      if (f.mimeType === 'application/pdf') type = 'pdf'
+      else if (f.mimeType?.startsWith('video/')) type = 'video'
+      return {
+        id: f.id,
+        label: f.filename,
+        src: f.url,
+        type,
+        badge: `Uploaded (${formatBytes(f.byteSize)})`,
+      }
+    }),
     ...REPO_MEDIA_ASSETS.map((a) => ({
       id: a.id,
       label: a.label,
@@ -62,7 +77,12 @@ export function MediaField({
       type: a.type,
       badge: 'Built-in asset',
     })),
-  ].filter((item) => allowVideo || item.type === 'image')
+  ].filter(
+    (item) =>
+      item.type === 'image' ||
+      (allowVideo && item.type === 'video') ||
+      (allowPdf && item.type === 'pdf')
+  )
 
   return (
     <div className="admin-media-box">
@@ -72,6 +92,8 @@ export function MediaField({
         <div className="admin-media-thumb">
           {!value ? (
             <span>None</span>
+          ) : isPdfPreview ? (
+            <span style={{ color: 'var(--accent)', fontWeight: 700 }}>PDF</span>
           ) : isVideoPreview ? (
             <video src={value} muted playsInline />
           ) : (
@@ -84,7 +106,12 @@ export function MediaField({
             type="text"
             className="admin-input"
             value={value || ''}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => {
+              const nextVal = e.target.value
+              const inferred =
+                allowPdf && /\.pdf(\?|$|#)/i.test(nextVal) ? 'pdf' : undefined
+              onChange(nextVal, inferred)
+            }}
             placeholder={placeholder}
           />
 
@@ -150,7 +177,11 @@ export function MediaField({
                 {combinedLibrary.map((asset) => (
                   <div key={asset.id} className="admin-vault-card">
                     <div className="admin-vault-preview">
-                      {asset.type === 'video' ? (
+                      {asset.type === 'pdf' ? (
+                        <span style={{ color: 'var(--accent)', fontWeight: 700 }}>
+                          PDF DOCUMENT
+                        </span>
+                      ) : asset.type === 'video' ? (
                         <video src={asset.src} muted playsInline />
                       ) : (
                         <img src={asset.src} alt={asset.label} />

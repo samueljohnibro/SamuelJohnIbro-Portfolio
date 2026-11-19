@@ -342,42 +342,46 @@ export const DEFAULT_PORTFOLIO = {
       'I continue expanding my technical capabilities through practical projects, professional testing, software development, technical training, and ongoing learning.',
   },
   credentials: [
-    {
-      id: 'cred-degree',
-      label: 'DEGREE',
-      title: 'B.Sc. Software Engineering',
-      institution: 'American University of Nigeria',
-      description:
-        "Bachelor's degree in Software Engineering with a focus on software development, systems, and engineering fundamentals.",
-      visible: true,
-    },
-    {
-      id: 'cred-aws',
-      label: 'CERTIFICATION',
-      title: 'AWS Certified Cloud Practitioner',
-      institution: 'Amazon Web Services',
-      description:
-        'Foundational AWS certification covering cloud concepts, services, security, architecture, and pricing.',
-      visible: true,
-    },
-    {
-      id: 'cred-isc2',
-      label: 'PROFESSIONAL',
-      title: 'ISC2 Candidate',
-      institution: 'ISC2',
-      description:
-        'Professional cybersecurity pathway supporting continued development in security and technology practices.',
-      visible: true,
-    },
-    {
-      id: 'cred-tech',
-      label: 'TECHNICAL',
-      title: '27+ Technical Certifications',
-      institution: 'Software • AI • Cloud • Development',
-      description:
-        'Certifications and training across Python, Java, C++, AI, Flutter, Firebase, data structures, and related technical disciplines.',
-      visible: true,
-    },
+      {
+        id: 'cred-degree',
+        label: 'DEGREE',
+        title: 'B.Sc. Software Engineering',
+        institution: 'American University of Nigeria',
+        description:
+          "Bachelor's degree in Software Engineering with a focus on software development, systems, and engineering fundamentals.",
+        attachment: null,
+        visible: true,
+      },
+      {
+        id: 'cred-aws',
+        label: 'CERTIFICATION',
+        title: 'AWS Certified Cloud Practitioner',
+        institution: 'Amazon Web Services',
+        description:
+          'Foundational AWS certification covering cloud concepts, services, security, architecture, and pricing.',
+        attachment: null,
+        visible: true,
+      },
+      {
+        id: 'cred-isc2',
+        label: 'PROFESSIONAL',
+        title: 'ISC2 Candidate',
+        institution: 'ISC2',
+        description:
+          'Professional cybersecurity pathway supporting continued development in security and technology practices.',
+        attachment: null,
+        visible: true,
+      },
+      {
+        id: 'cred-tech',
+        label: 'TECHNICAL',
+        title: '27+ Technical Certifications',
+        institution: 'Software • AI • Cloud • Development',
+        description:
+          'Certifications and training across Python, Java, C++, AI, Flutter, Firebase, data structures, and related technical disciplines.',
+        attachment: null,
+        visible: true,
+      },
   ],
   extrasSection: {
     visible: true,
@@ -788,14 +792,35 @@ export function normalizePortfolioData(raw) {
   if (Array.isArray(raw.credentials)) {
     base.credentials = raw.credentials
       .filter((c) => c && typeof c === 'object')
-      .map((c, idx) => ({
-        id: pickStr(c.id, `cred-${idx + 1}`),
-        label: pickStr(c.label, 'CREDENTIAL'),
-        title: pickStr(c.title, ''),
-        institution: pickStr(c.institution, ''),
-        description: pickStr(c.description, ''),
-        visible: pickBool(c.visible, true),
-      }))
+      .map((c, idx) => {
+        const rawAttach = c.attachment
+        const attachSrc =
+          rawAttach && typeof rawAttach === 'object'
+            ? pickStr(rawAttach.src, '').trim()
+            : ''
+        const inferPdf = /\.pdf(\?|$|#)/i.test(attachSrc)
+        return {
+          id: pickStr(c.id, `cred-${idx + 1}`),
+          label: pickStr(c.label, 'CREDENTIAL'),
+          title: pickStr(c.title, ''),
+          institution: pickStr(c.institution, ''),
+          description: pickStr(c.description, ''),
+          attachment: attachSrc
+            ? {
+                src: attachSrc,
+                type:
+                  rawAttach.type === 'pdf' || (rawAttach.type !== 'image' && inferPdf)
+                    ? 'pdf'
+                    : 'image',
+                label: pickStr(
+                  rawAttach.label,
+                  inferPdf ? 'View Certificate (PDF)' : 'View Certificate'
+                ),
+              }
+            : null,
+          visible: pickBool(c.visible, true),
+        }
+      })
   }
 
   if (raw.extrasSection && typeof raw.extrasSection === 'object') {
