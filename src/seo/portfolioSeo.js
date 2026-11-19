@@ -7,6 +7,7 @@ import {
 import { computeReviewsSummary } from '../data/reviewsMeta.js'
 
 export const DEFAULT_CANONICAL_ORIGIN = 'https://sji.sjip.workers.dev'
+export const DEFAULT_OG_IMAGE_PATH = '/assets/samuel-chomkatech-card-og.jpg'
 
 const LOCAL_HOSTNAMES = new Set([
   'localhost',
@@ -260,11 +261,28 @@ export function resolveSeoMetadata(
     stripMarkdownBold(seo.description || '').trim() ||
     DEFAULT_PORTFOLIO.site.seo.description
 
-  const rawOgImage = String(seo.ogImage || '').trim() || '/og-image.jpg'
+  const rawOgImage =
+    String(seo.ogImage || '').trim() || DEFAULT_OG_IMAGE_PATH
   const ogImageUrl =
-    toAbsoluteUrl(rawOgImage, origin) || `${origin}/og-image.jpg`
-  const isDefaultOgCard =
-    rawOgImage === '/og-image.jpg' || ogImageUrl.endsWith('/og-image.jpg')
+    toAbsoluteUrl(rawOgImage, origin) || `${origin}${DEFAULT_OG_IMAGE_PATH}`
+  const isStandardOgCard =
+    rawOgImage === DEFAULT_OG_IMAGE_PATH ||
+    ogImageUrl.endsWith(DEFAULT_OG_IMAGE_PATH) ||
+    rawOgImage === '/og-image.jpg' ||
+    ogImageUrl.endsWith('/og-image.jpg')
+  const isOriginalBusinessCardPng =
+    rawOgImage === '/assets/samuel-chomkatech-card.png' ||
+    ogImageUrl.endsWith('/assets/samuel-chomkatech-card.png')
+  const ogImageWidth = isStandardOgCard
+    ? '1200'
+    : isOriginalBusinessCardPng
+      ? '1672'
+      : ''
+  const ogImageHeight = isStandardOgCard
+    ? '630'
+    : isOriginalBusinessCardPng
+      ? '941'
+      : ''
 
   const jobTitle =
     String(seo.jobTitle || '').trim() ||
@@ -311,8 +329,8 @@ export function resolveSeoMetadata(
     sameAs,
     ogImageUrl,
     ogImageType: inferImageMimeType(ogImageUrl),
-    ogImageWidth: isDefaultOgCard ? '1200' : '',
-    ogImageHeight: isDefaultOgCard ? '630' : '',
+    ogImageWidth,
+    ogImageHeight,
     ogImageAlt: `${brandName} (${fullName}) — ${jobTitle}`,
     twitterCard: 'summary_large_image',
     googleSiteVerification,
@@ -626,6 +644,7 @@ export function buildSitemapXml(
   updatedAt = null
 ) {
   const { brandName, fullName } = extractFullName(portfolio)
+  const seoMeta = resolveSeoMetadata(portfolio, origin)
   const lastModDate =
     updatedAt && !Number.isNaN(Date.parse(updatedAt))
       ? new Date(updatedAt).toISOString().split('T')[0]
@@ -642,8 +661,8 @@ export function buildSitemapXml(
   }
 
   addImage(
-    '/og-image.jpg',
-    `${brandName} — Software Engineer & Founder of chomkaTECH™`,
+    seoMeta.ogImageUrl,
+    `${brandName} — ${seoMeta.jobTitle}`,
     `Official engineering portfolio preview for ${brandName} (${fullName})`
   )
 
