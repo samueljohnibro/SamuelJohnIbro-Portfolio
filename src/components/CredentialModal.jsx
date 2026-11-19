@@ -1,19 +1,42 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { detectTransparentBadge } from './credentialMedia.js'
 
 export function CredentialModal({ credential, onClose }) {
   const closeButtonRef = useRef(null)
+  const imgRef = useRef(null)
+  const [detectedBadgeSrc, setDetectedBadgeSrc] = useState('')
 
   useEffect(() => {
     closeButtonRef.current?.focus()
   }, [])
 
-  if (!credential?.attachment?.src) {
+  const attachment = credential?.attachment
+  const isPdf = attachment?.type === 'pdf'
+  const attachSrc = attachment?.src || ''
+
+  useEffect(() => {
+    if (isPdf || !attachSrc || attachment?.shape === 'badge') return undefined
+    const frameId = window.requestAnimationFrame(() => {
+      const imgEl = imgRef.current
+      if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
+        if (detectTransparentBadge(imgEl)) {
+          setDetectedBadgeSrc(attachSrc)
+        }
+      }
+    })
+    return () => window.cancelAnimationFrame(frameId)
+  }, [attachSrc, attachment?.shape, isPdf])
+
+  if (!attachSrc) {
     return null
   }
 
-  const { attachment } = credential
-  const isPdf = attachment.type === 'pdf'
+  const isFramelessBadge =
+    !isPdf &&
+    (attachment.shape === 'badge' ||
+      ((!attachment.shape || attachment.shape === 'auto') &&
+        detectedBadgeSrc === attachSrc))
 
   const modalContent = (
     <div
@@ -74,9 +97,18 @@ export function CredentialModal({ credential, onClose }) {
           ) : (
             <div className="credential-modal-image-wrap">
               <img
+                ref={imgRef}
                 src={attachment.src}
                 alt={`${credential.title} certificate`}
-                className="credential-modal-image"
+                onLoad={(e) => {
+                  if (
+                    (!attachment.shape || attachment.shape === 'auto') &&
+                    detectTransparentBadge(e.currentTarget)
+                  ) {
+                    setDetectedBadgeSrc(attachSrc)
+                  }
+                }}
+                className={`credential-modal-image${isFramelessBadge ? ' is-badge' : ''}`}
               />
             </div>
           )}

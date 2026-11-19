@@ -1,44 +1,34 @@
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMasonryGrid } from '../hooks/useMasonryGrid.js'
-
-const VALID_SHAPES = new Set([
-  'square',
-  'circle',
-  'landscape',
-  'portrait',
-])
-
-function classifyImageAspect(width, height) {
-  if (!width || !height) {
-    return { ratio: 1, autoShape: 'square' }
-  }
-
-  const ratio = Number((width / height).toFixed(3))
-  let autoShape = 'square'
-  if (ratio > 1.22) {
-    autoShape = 'landscape'
-  } else if (ratio < 0.82) {
-    autoShape = 'portrait'
-  }
-  return { ratio, autoShape }
-}
+import {
+  VALID_CREDENTIAL_SHAPES,
+  classifyImageAspect,
+  detectTransparentBadge,
+} from './credentialMedia.js'
 
 function CredentialCard({ cred, onOpenCredential, onMediaLayout }) {
   const [measured, setMeasured] = useState(null)
+  const imgRef = useRef(null)
 
   const attach = cred.attachment?.src ? cred.attachment : null
+  const attachSrc = attach?.src || ''
   const isPdf = attach?.type === 'pdf'
   const attachLabel =
     attach?.label || (isPdf ? 'View Certificate (PDF)' : 'View Certificate')
 
   const configuredShape =
-    !isPdf && VALID_SHAPES.has(attach?.shape) ? attach.shape : null
+    !isPdf && VALID_CREDENTIAL_SHAPES.has(attach?.shape) ? attach.shape : null
   const activeMetrics =
-    !isPdf && attach?.src && measured?.src === attach.src ? measured : null
+    !isPdf && attachSrc && measured?.src === attachSrc ? measured : null
+  const isAutoPending = !isPdf && !configuredShape && !activeMetrics
   const effectiveShape = attach
     ? isPdf
       ? 'pdf'
-      : configuredShape || activeMetrics?.autoShape || 'square'
+      : configuredShape ||
+        (activeMetrics?.isTransparentBadge
+          ? 'badge'
+          : activeMetrics?.autoShape) ||
+        'square'
     : null
 
   const cardClassName = attach
@@ -50,24 +40,46 @@ function CredentialCard({ cred, onOpenCredential, onMediaLayout }) {
       ? { '--attach-ratio': String(activeMetrics.ratio) }
       : undefined
 
-  const handleImageLoad = (event) => {
-    if (!attach?.src) return
-    const { naturalWidth, naturalHeight } = event.currentTarget
-    const { ratio, autoShape } = classifyImageAspect(
-      naturalWidth,
-      naturalHeight
-    )
-    setMeasured((prev) => {
-      if (
-        prev?.src === attach.src &&
-        prev.ratio === ratio &&
-        prev.autoShape === autoShape
-      ) {
-        return prev
+  const inspectImage = useCallback(
+    (imgEl) => {
+      if (!attachSrc || !imgEl || !imgEl.naturalWidth || !imgEl.naturalHeight) {
+        return
       }
-      return { src: attach.src, ratio, autoShape }
+      const { naturalWidth, naturalHeight } = imgEl
+      const { ratio, autoShape } = classifyImageAspect(
+        naturalWidth,
+        naturalHeight
+      )
+      const isTransparentBadge = detectTransparentBadge(imgEl)
+      setMeasured((prev) => {
+        if (
+          prev?.src === attachSrc &&
+          prev.ratio === ratio &&
+          prev.autoShape === autoShape &&
+          prev.isTransparentBadge === isTransparentBadge
+        ) {
+          return prev
+        }
+        return { src: attachSrc, ratio, autoShape, isTransparentBadge }
+      })
+      onMediaLayout?.()
+    },
+    [attachSrc, onMediaLayout]
+  )
+
+  useEffect(() => {
+    if (isPdf || !attachSrc || typeof window === 'undefined') return undefined
+    const frameId = window.requestAnimationFrame(() => {
+      const imgEl = imgRef.current
+      if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
+        inspectImage(imgEl)
+      }
     })
-    onMediaLayout?.()
+    return () => window.cancelAnimationFrame(frameId)
+  }, [attachSrc, inspectImage, isPdf])
+
+  const handleImageLoad = (event) => {
+    inspectImage(event.currentTarget)
   }
 
   const copyBlock = (
@@ -90,7 +102,7 @@ function CredentialCard({ cred, onOpenCredential, onMediaLayout }) {
           {copyBlock}
 
           <div
-            className={`credential-attachment is-${effectiveShape}`}
+            className={`credential-attachment is-${effectiveShape}${isAutoPending ? ' is-auto-pending' : ''}`}
             style={attachmentStyle}
           >
             {isPdf ? (
@@ -119,9 +131,11 @@ function CredentialCard({ cred, onOpenCredential, onMediaLayout }) {
               >
                 <span className="credential-attachment-frame">
                   <img
+                    ref={imgRef}
                     key={attach.src}
                     src={attach.src}
                     alt={`${cred.title} certificate or badge`}
+                    loading="lazy"
                     decoding="async"
                     onLoad={handleImageLoad}
                   />

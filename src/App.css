@@ -2608,6 +2608,10 @@ main {
   max-width: 34%;
 }
 
+.credential-attachment.is-badge {
+  max-width: min(140px, 36%);
+}
+
 .credential-attachment.is-landscape {
   max-width: min(198px, 42%);
 }
@@ -2650,8 +2654,14 @@ main {
   overflow: hidden;
   transition:
     border-color 0.22s ease,
+    background-color 0.22s ease,
     box-shadow 0.22s ease,
     transform 0.22s ease;
+}
+
+.credential-attachment.is-auto-pending .credential-attachment-frame {
+  border-color: transparent;
+  background: transparent;
 }
 
 .credential-attachment-preview:hover .credential-attachment-frame {
@@ -2685,6 +2695,35 @@ main {
   max-height: none;
   object-fit: cover;
   border-radius: 50%;
+}
+
+.credential-attachment.is-badge .credential-attachment-frame {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.credential-attachment.is-badge .credential-attachment-frame img {
+  max-height: 128px;
+  border-radius: 0;
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.55));
+  transition: transform 0.22s ease, filter 0.22s ease;
+}
+
+.credential-attachment.is-badge .credential-attachment-preview:hover .credential-attachment-frame {
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.credential-attachment.is-badge .credential-attachment-preview:hover .credential-attachment-frame img {
+  transform: translateY(-3px) scale(1.03);
+  filter:
+    drop-shadow(0 12px 24px rgba(0, 0, 0, 0.68))
+    drop-shadow(0 0 14px rgba(200, 155, 60, 0.26));
 }
 
 .credential-attachment.is-landscape .credential-attachment-frame {
@@ -2841,6 +2880,12 @@ main {
   object-fit: contain;
   border-radius: 10px;
   box-shadow: 0 20px 56px rgba(0, 0, 0, 0.72);
+}
+
+.credential-modal-image.is-badge {
+  border-radius: 0;
+  box-shadow: none;
+  filter: drop-shadow(0 18px 42px rgba(0, 0, 0, 0.72));
 }
 
 .credentials-summary {
@@ -4667,10 +4712,15 @@ button:focus:not(:focus-visible) {
     gap: 16px;
   }
 
+  .credential-attachment.is-badge,
   .credential-attachment.is-square,
   .credential-attachment.is-circle,
   .credential-attachment.is-portrait {
     max-width: min(106px, 32%);
+  }
+
+  .credential-attachment.is-badge {
+    max-width: min(114px, 34%);
   }
 
   .credential-attachment.is-circle {

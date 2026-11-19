@@ -3345,7 +3345,10 @@ export default function AdminApp() {
                                 }
                               >
                                 <option value="auto">
-                                  Auto (Match Uploaded Image)
+                                  Auto (Frameless if Transparent Badge)
+                                </option>
+                                <option value="badge">
+                                  Frameless Badge (Pure Image, No Box)
                                 </option>
                                 <option value="square">Square (1:1)</option>
                                 <option value="circle">Circular Badge</option>

@@ -981,7 +981,14 @@ export function normalizePortfolioData(raw) {
           rawAttach?.type === 'pdf' || (rawAttach?.type !== 'image' && inferPdf)
             ? 'pdf'
             : 'image'
-        const validShapes = ['auto', 'square', 'circle', 'landscape', 'portrait']
+        const validShapes = [
+          'auto',
+          'badge',
+          'square',
+          'circle',
+          'landscape',
+          'portrait',
+        ]
         const attachShape =
           attachType === 'image' && validShapes.includes(rawAttach?.shape)
             ? rawAttach.shape
