@@ -214,6 +214,7 @@ export function PortfolioPage({
     normalizePortfolioData(initialData)
   )
   const [isNavOpen, setIsNavOpen] = useState(false)
+  const [aboutWebpFailed, setAboutWebpFailed] = useState(false)
   const [expandedProject, setExpandedProject] = useState(null)
   const [expandedCredential, setExpandedCredential] = useState(null)
   const [reviews, setReviews] = useState(() =>
@@ -1547,7 +1548,8 @@ export function PortfolioPage({
 
             {portfolio.about.image?.src && (
               <div className="about-image">
-                {portfolio.about.image.src === '/assets/samuel-profile.png' ? (
+                {portfolio.about.image.src === '/assets/samuel-profile.png' &&
+                !aboutWebpFailed ? (
                   <picture>
                     <source
                       srcSet="/assets/samuel-profile.webp"
@@ -1563,12 +1565,26 @@ export function PortfolioPage({
                       height={779}
                       decoding="async"
                       fetchPriority="high"
+                      onError={() => setAboutWebpFailed(true)}
                     />
                   </picture>
                 ) : (
                   <img
                     src={portfolio.about.image.src}
-                    alt={portfolio.about.image.alt || 'Profile portrait'}
+                    alt={
+                      portfolio.about.image.alt ||
+                      `${brandName} — Software Engineer & Founder of chomkaTECH™`
+                    }
+                    width={
+                      portfolio.about.image.src === '/assets/samuel-profile.png'
+                        ? 720
+                        : undefined
+                    }
+                    height={
+                      portfolio.about.image.src === '/assets/samuel-profile.png'
+                        ? 779
+                        : undefined
+                    }
                     decoding="async"
                     fetchPriority="high"
                   />
