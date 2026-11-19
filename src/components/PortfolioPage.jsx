@@ -660,17 +660,26 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           .portfolio-app .navbar {
             position: fixed !important;
             top: 0;
-            left: 50%;
-            transform: translateX(-50%);
-            width: min(var(--max-width), calc(100% - 48px));
+            left: 0;
+            right: 0;
+            transform: none;
+            width: 100%;
             margin: 0 !important;
-            padding-top: 22px;
-            padding-bottom: 22px;
+            padding: 20px max(24px, calc(50% - var(--max-width) / 2));
+            gap: clamp(16px, 2.5vw, 30px);
             z-index: 1000;
             background: rgba(10, 10, 10, 0.78);
             border-bottom: 1px solid rgba(163, 163, 163, 0.14);
             backdrop-filter: blur(18px);
             -webkit-backdrop-filter: blur(18px);
+          }
+
+          .portfolio-app .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding-block: 4px;
+            line-height: 1.2;
           }
 
           .portfolio-app .hero-section {
@@ -816,16 +825,21 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           }
 
           .portfolio-app .nav-links {
+            min-width: 0;
             display: flex;
             align-items: center;
             justify-content: flex-end;
-            gap: 28px;
+            gap: clamp(14px, 2vw, 28px);
           }
 
           .portfolio-app .nav-links a {
+            display: inline-flex;
+            align-items: center;
+            padding-block: 4px;
             color: var(--muted);
             font-size: 0.82rem;
             font-weight: 500;
+            line-height: 1.2;
             white-space: nowrap;
             transition: color 0.2s ease, text-shadow 0.2s ease, opacity 0.2s ease;
           }
@@ -835,11 +849,16 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
             text-shadow: 0 0 14px rgba(200, 155, 60, 0.38);
           }
 
+          @media (max-width: 900px) {
+            .portfolio-app .navbar {
+              padding: 18px max(24px, calc(50% - var(--max-width) / 2));
+            }
+          }
+
           @media (max-width: 768px) {
             .portfolio-app .navbar {
-              width: min(var(--max-width), calc(100% - 32px));
-              padding-top: 16px;
-              padding-bottom: 16px;
+              width: 100%;
+              padding: 16px max(16px, calc(50% - var(--max-width) / 2));
             }
 
             .portfolio-app .nav-toggle {
@@ -896,9 +915,8 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
 
           @media (max-width: 480px) {
             .portfolio-app .navbar {
-              width: calc(100% - 32px);
-              padding-top: 14px;
-              padding-bottom: 14px;
+              width: 100%;
+              padding: 14px 16px;
             }
 
             .portfolio-app .hero-section {
