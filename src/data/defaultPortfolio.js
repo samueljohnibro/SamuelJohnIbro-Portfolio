@@ -89,6 +89,7 @@ export const DEFAULT_PORTFOLIO = {
       { id: 'nav-training', label: 'Training', href: '#training', visible: true },
       { id: 'nav-credentials', label: 'Credentials', href: '#credentials', visible: true },
       { id: 'nav-extras', label: 'Extras', href: '#extras', visible: true },
+      { id: 'nav-reviews', label: 'Reviews', href: '#reviews', visible: true },
       { id: 'nav-contact', label: 'Contact', href: '#contact', visible: true },
     ],
     footerLeft: '© {year} Samuel Silachomka John-Ibro',
@@ -96,7 +97,23 @@ export const DEFAULT_PORTFOLIO = {
     seo: {
       title: 'Samuel John-Ibro — Software Engineer & Founder of chomkaTECH™',
       description:
-        'Samuel Silachomka John-Ibro is a Software Engineer and founder of chomkaTECH™, focused on building practical software, cloud systems, AI-driven solutions, and quality engineering.',
+        'Official portfolio of Samuel John-Ibro (Samuel Silachomka John-Ibro) — Software Engineer, AWS-certified builder, QA tester, and Founder of chomkaTECH™.',
+      canonicalUrl: '',
+      keywords:
+        'Samuel John-Ibro, Samuel Silachomka John-Ibro, chomkaTECH, Software Engineer, Software Developer, QA Tester, Quality Engineering, AWS Certified Cloud Practitioner, Cloud, AI, Backend Development, Flutter, JavaScript, Python, silachomka',
+      aliases: [
+        'Samuel Silachomka John-Ibro',
+        'Samuel S. John-Ibro',
+        'silachomka',
+        'chomkaTECH',
+        'chomkaTECH™',
+      ],
+      jobTitle: 'Software Engineer & Founder of chomkaTECH™',
+      organizationName: 'chomkaTECH™',
+      location: '',
+      ogImage: '/og-image.jpg',
+      googleSiteVerification: '',
+      bingSiteVerification: '',
     },
   },
   hero: {
@@ -104,7 +121,7 @@ export const DEFAULT_PORTFOLIO = {
     headline: 'I build software that solves real problems.',
     accentPhrase: 'solves real problems.',
     description:
-      "I'm Samuel Silachomka John-Ibro, a Software Engineer and AWS-certified developer focused on software development, cloud, AI, backend systems, and quality engineering. I'm also the founder of chomkaTECH™, a software and technology company focused on building practical digital products and solutions.",
+      "I'm Samuel John-Ibro (Samuel Silachomka John-Ibro), a Software Engineer and AWS-certified developer focused on software development, cloud, AI, backend systems, and quality engineering. I'm also the founder of chomkaTECH™, a software and technology company focused on building practical digital products and solutions.",
     primaryCta: {
       label: 'View my work',
       href: '#projects',
@@ -128,7 +145,7 @@ export const DEFAULT_PORTFOLIO = {
     ],
     image: {
       src: '/assets/samuel-profile.png',
-      alt: 'Samuel John-Ibro',
+      alt: 'Samuel John-Ibro (Samuel Silachomka John-Ibro) — Software Engineer & Founder of chomkaTECH™',
     },
   },
   projectsSection: {
@@ -418,9 +435,17 @@ export const DEFAULT_PORTFOLIO = {
       visible: true,
     },
   ],
+  reviewsSection: {
+    visible: true,
+    label: '07 — REVIEWS',
+    heading: 'Words from collaborators.',
+    intro:
+      'Ratings and reviews from clients, teammates, training participants, and users — with tagged profile pages so you can verify who wrote each review.',
+    showProjectBadges: true,
+  },
   contact: {
     visible: true,
-    label: '07 — CONTACT',
+    label: '08 — CONTACT',
     heading: "Let's build something meaningful.",
     description:
       "I'm open to software engineering, QA/testing, AI, cloud, product development, and technical opportunities where I can contribute, solve problems, and continue growing as an engineer and builder.",
@@ -617,6 +642,48 @@ export function normalizePortfolioData(raw) {
       base.site.seo.description = pickStr(
         raw.site.seo.description,
         base.site.seo.description
+      )
+      base.site.seo.canonicalUrl = pickStr(
+        raw.site.seo.canonicalUrl,
+        base.site.seo.canonicalUrl
+      )
+      base.site.seo.keywords = pickStr(
+        raw.site.seo.keywords,
+        base.site.seo.keywords
+      )
+      if (Array.isArray(raw.site.seo.aliases)) {
+        base.site.seo.aliases = raw.site.seo.aliases
+          .map((item) => String(item).trim())
+          .filter(Boolean)
+      } else if (typeof raw.site.seo.aliases === 'string') {
+        base.site.seo.aliases = raw.site.seo.aliases
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+      }
+      base.site.seo.jobTitle = pickStr(
+        raw.site.seo.jobTitle,
+        base.site.seo.jobTitle
+      )
+      base.site.seo.organizationName = pickStr(
+        raw.site.seo.organizationName,
+        base.site.seo.organizationName
+      )
+      base.site.seo.location = pickStr(
+        raw.site.seo.location,
+        base.site.seo.location
+      )
+      base.site.seo.ogImage = pickStr(
+        raw.site.seo.ogImage,
+        base.site.seo.ogImage
+      )
+      base.site.seo.googleSiteVerification = pickStr(
+        raw.site.seo.googleSiteVerification,
+        base.site.seo.googleSiteVerification
+      )
+      base.site.seo.bingSiteVerification = pickStr(
+        raw.site.seo.bingSiteVerification,
+        base.site.seo.bingSiteVerification
       )
     }
   }
@@ -875,9 +942,53 @@ export function normalizePortfolioData(raw) {
       }))
   }
 
+  if (raw.reviewsSection && typeof raw.reviewsSection === 'object') {
+    base.reviewsSection.visible = pickBool(raw.reviewsSection.visible, true)
+    base.reviewsSection.label = pickStr(
+      raw.reviewsSection.label,
+      base.reviewsSection.label
+    )
+    base.reviewsSection.heading = pickStr(
+      raw.reviewsSection.heading,
+      base.reviewsSection.heading
+    )
+    base.reviewsSection.intro = pickStr(
+      raw.reviewsSection.intro,
+      base.reviewsSection.intro
+    )
+    base.reviewsSection.showProjectBadges = pickBool(
+      raw.reviewsSection.showProjectBadges,
+      true
+    )
+  } else {
+    // Seamless upgrade for D1 portfolio states saved before Reviews existed
+    const hasReviewsNav = base.site.navLinks.some(
+      (link) => link?.href === '#reviews' || link?.id === 'nav-reviews'
+    )
+    if (!hasReviewsNav) {
+      const contactIdx = base.site.navLinks.findIndex(
+        (link) => link?.href === '#contact' || link?.id === 'nav-contact'
+      )
+      const reviewsNavLink = {
+        id: 'nav-reviews',
+        label: 'Reviews',
+        href: '#reviews',
+        visible: true,
+      }
+      if (contactIdx >= 0) {
+        base.site.navLinks.splice(contactIdx, 0, reviewsNavLink)
+      } else {
+        base.site.navLinks.push(reviewsNavLink)
+      }
+    }
+  }
+
   if (raw.contact && typeof raw.contact === 'object') {
     base.contact.visible = pickBool(raw.contact.visible, true)
     base.contact.label = pickStr(raw.contact.label, base.contact.label)
+    if (!raw.reviewsSection && base.contact.label.trim() === '07 — CONTACT') {
+      base.contact.label = '08 — CONTACT'
+    }
     base.contact.heading = pickStr(raw.contact.heading, base.contact.heading)
     base.contact.description = pickStr(
       raw.contact.description,

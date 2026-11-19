@@ -19,6 +19,15 @@ export default defineConfig([
     },
   },
   {
+    files: ['worker/**/*.{js,jsx}'],
+    languageOptions: {
+      globals: {
+        ...globals.serviceworker,
+        HTMLRewriter: 'readonly',
+      },
+    },
+  },
+  {
     files: ['scripts/**/*.{js,mjs}'],
     extends: [js.configs.recommended],
     languageOptions: {

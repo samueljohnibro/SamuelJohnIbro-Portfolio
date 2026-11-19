@@ -1157,3 +1157,83 @@
     padding: 18px;
   }
 }
+
+/* =========================================================
+   Reviews & Collaborator Invites Panel
+   ========================================================= */
+
+.admin-invite-row {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(163, 163, 163, 0.18);
+  background: rgba(12, 12, 12, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.admin-invite-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-invite-meta strong {
+  font-size: 0.84rem;
+  color: #f6e3b3;
+}
+
+.admin-invite-meta span {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.admin-invite-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  color: #cfcfcf;
+  word-break: break-all;
+}
+
+.admin-review-item {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(163, 163, 163, 0.16);
+  background: rgba(10, 10, 10, 0.72);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-review-head-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-review-comment {
+  color: #e6e6e6;
+  font-size: 0.85rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.admin-status-approved {
+  border-color: rgba(82, 196, 140, 0.42);
+  color: #cef5e0;
+}
+
+.admin-status-pending {
+  border-color: rgba(200, 155, 60, 0.52);
+  color: #f6e3b3;
+}
+
+.admin-status-hidden {
+  border-color: rgba(220, 76, 100, 0.45);
+  color: #ffd6de;
+}

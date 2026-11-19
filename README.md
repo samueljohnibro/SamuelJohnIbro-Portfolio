@@ -20,14 +20,15 @@ When the D1 API is unreachable (such as standalone `vite` preview without a Work
 ### Public portfolio experience
 
 - **Interactive orbital background** — Responsive, frame-rate-independent HTML5 Canvas animation (`SpaceBackground`) rendering an orbital eclipse horizon, 3D Keplerian satellite trajectories, ambient drifting star-motes, and a spacetime geodesic mesh, paired with a pure-CSS orbital fallback so ambient motion works across viewports, browser privacy protections, and system animation settings.
-- **Dynamic hero & SEO synchronization** — Intersection-driven typewriter headline with accent highlighting (`resolveHeadlineParts`) and dynamic document title/meta description updates.
+- **Dynamic hero, Edge SSR & SEO synchronization** — Cloudflare Worker edge server-side rendering (`renderToString` + `HTMLRewriter`) directly from live D1 content, full Schema.org JSON-LD `@graph` (`Person`, `Organization`, `WebSite`, `ProfilePage`, `ItemList`, `Course`), dynamic `/sitemap.xml` (with image entries), `/robots.txt`, `/llms.txt`, and 1200×630 Open Graph preview card (`/og-image.jpg`). Intersection-driven typewriter headline with accent highlighting (`resolveHeadlineParts`) and live document metadata sync.
 - **Smart projects masonry grid** — Projects sorted automatically (`LIVE` first, then newest to oldest within each status) into a balanced shortest-column masonry layout (`ProjectsGrid`) with inline interactive site previews and an accessible fullscreen modal (`ProjectPreview`).
 - **Training media carousel** — Mixed-media showcase (`TrainingCarousel`) supporting images, auto-timed short video clips, and embedded YouTube/Vimeo presentations, alongside structured training role/focus notes.
-- **Full section suite** — Dedicated sections for About (`01`), Projects (`02`), Technical Toolkit (`03`), Cloud Computing Training (`04`), Education & Credentials (`05`), Creative Extras (`06`), and Contact (`07`).
+- **Full section suite** — Dedicated sections for About (`01`), Projects (`02`), Technical Toolkit (`03`), Cloud Computing Training (`04`), Education & Credentials (`05`), Creative Extras (`06`), Reviews & 5-Star Ratings (`07`), and Contact (`08`).
+- **No-login Reviews & 5-Star Ratings** — Visitors and collaborators can rate Samuel overall or individual projects (`1`–`5` stars), leave comments, and tag up to 4 real profile pages (LinkedIn, GitHub, X, personal websites) with interactive platform badges, protected by signed form challenges, honeypot filtering, D1 IP rate limiting, and optional Turnstile / collaborator invite links.
 
 ### Portfolio Studio (`/admin` CMS)
 
-- **11-tab management workspace** — Overview, Hero & Brand, About, Projects, Skills, Training, Credentials, Extras, Contact, Cloudflare D1 Media Vault, and Security.
+- **12-tab management workspace** — Overview, Hero & Brand, About, Projects, Skills, Training, Credentials, Extras, Reviews, Contact, Cloudflare D1 Media Vault, and Security.
 - **Live publishing & cross-tab sync** — Persists normalized portfolio JSON to Cloudflare D1 (`portfolio_state`) and broadcasts live updates across open browser tabs via `BroadcastChannel`.
 - **Backup & recovery** — Export full JSON snapshots, import backups into draft state, discard unsaved edits, or reset live state back to the baseline portfolio configuration.
 - **Offline hash generator** — Client-side WebCrypto tool (`passwordCrypto.js`) to generate salted `PBKDF2-SHA256` secrets without sending plaintext passwords over the network.
@@ -57,7 +58,7 @@ When the D1 API is unreachable (such as standalone `vite` preview without a Work
    (ASSETS / dist)               (/api/*)                (/media/:id/:name)
                                      |
                       Cloudflare D1 (sji-portfolio-db)
-       portfolio_state | media_files | media_chunks | internal_config | login_attempts
+   portfolio_state | media_files | media_chunks | reviews | review_invites | internal_config
 ```
 
 ### D1 database tables
@@ -69,7 +70,10 @@ Tables are initialized automatically on first database access by `ensureDatabase
 | `portfolio_state` | Stores the active published portfolio JSON (`id = 1`) and `updated_at` timestamp |
 | `media_files` | Tracks uploaded asset metadata, MIME type, byte size, chunk count, and status |
 | `media_chunks` | Stores 256 KB binary `BLOB` chunks keyed by `(media_id, chunk_index)` |
-| `internal_config` | Persists auto-generated `session_secret` fallback when `SESSION_SECRET` env var is unset |
+| `reviews` | Stores 5-star reviews targeting Overall or specific projects, tagged profile URLs, verification & replies |
+| `review_invites` | Stores shareable zero-login collaborator invite codes with usage limits and verified badge labels |
+| `review_rate_limits` | Tracks hashed IP submission cooldowns and hourly review limits |
+| `internal_config` | Persists auto-generated `session_secret` fallback and live review moderation settings (`reviews_settings`) |
 | `login_attempts` | Tracks hashed IP login failures and lockout timestamps for brute-force protection |
 
 ## Project structure
@@ -108,8 +112,10 @@ SamuelJohnIbro-Portfolio/
 │   │   └── TrainingCarousel.jsx       # Auto-advancing image/video/embed carousel
 │   └── data/
 │       └── defaultPortfolio.js        # Baseline content, normalization & sorting helpers
+│   └── seo/
+│       └── portfolioSeo.js            # Dynamic JSON-LD @graph, sitemap.xml, robots.txt & llms.txt
 ├── worker/
-│   └── index.js                       # Cloudflare Worker API, D1 persistence, auth & media
+│   └── index.js                       # Cloudflare Worker SSR, API, D1 persistence, auth & media
 └── README.md
 ```
 
@@ -120,12 +126,24 @@ SamuelJohnIbro-Portfolio/
 | Public | `GET /api/health` | Returns Worker, D1 binding, and auth configuration status |
 | Public | `GET /api/portal-check?path=...` | Checks whether a route matches `ADMIN_PATH` (default `/admin`) |
 | Public | `GET /api/portfolio` | Fetches normalized portfolio content from D1 (or bundled fallback) |
+| Public | `GET\|HEAD /sitemap.xml` | Dynamically generated XML sitemap (with image index) synced from D1 |
+| Public | `GET\|HEAD /robots.txt` | Crawler directives and canonical sitemap reference |
+| Public | `GET\|HEAD /llms.txt` | Structured Markdown portfolio overview for AI/LLM search engines |
+| Public | `GET /api/reviews` | Fetches approved 5-star reviews, rating summary, policy settings, and challenge token |
+| Public | `GET /api/reviews/invite?code=...` | Validates a zero-login collaborator invite code |
+| Public | `POST /api/reviews` | Submits a validated 5-star review with tagged profile URLs (anti-spam & rate-limited) |
 | Public | `GET\|HEAD /media/:id/:filename` | Streams ready media files from D1 chunks with `ETag` and `Range` support |
 | Auth | `GET /api/admin/session` | Reports authentication state, secret setup status, and media usage stats |
 | Auth | `POST /api/admin/login` | Verifies password against `ADMIN_PASSWORD_HASH` and issues signed cookie |
 | Auth | `POST /api/admin/logout` | Clears the admin session cookie |
 | Admin | `GET\|PUT /api/admin/portfolio` | Reads or validates, normalizes, and publishes portfolio JSON to D1 |
 | Admin | `POST /api/admin/portfolio/reset` | Resets D1 `portfolio_state` back to `DEFAULT_PORTFOLIO` |
+| Admin | `GET /api/admin/reviews` | Lists all reviews (approved/pending/hidden), summary stats, settings, and invites |
+| Admin | `PUT /api/admin/reviews/settings` | Updates live moderation mode and public submission access |
+| Admin | `POST /api/admin/reviews/invites` | Generates a verified collaborator invite link (`?invite=CODE#reviews`) |
+| Admin | `DELETE /api/admin/reviews/invites/:id` | Revokes/deletes an invite link |
+| Admin | `PATCH /api/admin/reviews/:id` | Approves, hides, verifies, features, or adds an author reply to a review |
+| Admin | `DELETE /api/admin/reviews/:id` | Permanently deletes a review from D1 |
 | Admin | `GET /api/admin/media` | Lists ready files in the D1 Media Vault |
 | Admin | `POST /api/admin/media/init` | Validates MIME type/size (≤ 25 MB) and creates a pending upload session |
 | Admin | `PUT /api/admin/media/:id/chunk/:index` | Stores a 256 KB binary chunk in `media_chunks` |
@@ -189,6 +207,8 @@ Production builds are configured in `wrangler.jsonc` for Worker `sji` with Cloud
 2. **Optional environment secrets/variables**:
    - `SESSION_SECRET` — Dedicated HMAC signing key (at least 16 characters); if omitted, the Worker auto-generates and stores one in `internal_config`.
    - `ADMIN_PATH` — Custom hidden admin path (e.g. `/custom-studio-route`) to replace the default `/admin` route.
+   - `CANONICAL_ORIGIN` — Override canonical site origin (e.g. `https://samueljohnibro.com`) when connecting a custom domain.
+   - `GOOGLE_SITE_VERIFICATION` / `BING_SITE_VERIFICATION` — Optional search-console verification meta tokens (also editable directly in Admin Studio → Hero & Brand → SEO).
 
 3. **Deploy to Cloudflare Workers**:
 

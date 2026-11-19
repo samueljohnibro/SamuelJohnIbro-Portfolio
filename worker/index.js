@@ -1,8 +1,31 @@
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
+import { PortfolioPage } from '../src/components/PortfolioPage.jsx'
 import {
   DEFAULT_PORTFOLIO,
   isSafeMediaOrLinkUrl,
   normalizePortfolioData,
 } from '../src/data/defaultPortfolio.js'
+import {
+  MAX_OWNER_REPLY_LENGTH,
+  MAX_PROFILES_PER_REVIEW,
+  MAX_RELATIONSHIP_LENGTH,
+  MAX_REVIEWER_NAME_LENGTH,
+  MAX_REVIEWER_ROLE_LENGTH,
+  MAX_REVIEW_COMMENT_LENGTH,
+  MIN_REVIEW_COMMENT_LENGTH,
+  computeReviewsSummary,
+  normalizeProfileLinks,
+} from '../src/data/reviewsMeta.js'
+import {
+  buildJsonLdGraph,
+  buildLlmsTxt,
+  buildRobotsTxt,
+  buildSitemapXml,
+  resolveCanonicalOrigin,
+  resolveSeoMetadata,
+  serializeJsonForHtml,
+} from '../src/seo/portfolioSeo.js'
 
 const SESSION_COOKIE_NAME = 'sji_admin_session'
 const SESSION_TTL_SECONDS = 60 * 60 * 12 // 12 hours
@@ -12,6 +35,16 @@ const LOGIN_LOCKOUT_MS = 15 * 60 * 1000
 const MAX_MEDIA_CHUNK_BYTES = 256 * 1024 // 256 KB per D1 BLOB chunk
 const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024 // 25 MB max per uploaded file
 const MAX_PORTFOLIO_JSON_BYTES = 512 * 1024 // 512 KB sanity cap
+const MAX_REVIEW_BODY_BYTES = 16 * 1024 // 16 KB sanity cap
+const REVIEW_MIN_FILL_MS = 2000 // Reject automated sub-2s form blasts
+const REVIEW_CHALLENGE_TTL_MS = 6 * 60 * 60 * 1000 // 6 hours
+const REVIEW_COOLDOWN_MS = 45 * 1000 // 45s between reviews per IP
+const REVIEW_RATE_WINDOW_MS = 60 * 60 * 1000 // 1 hour window
+const MAX_REVIEWS_PER_WINDOW = 4
+const DEFAULT_REVIEWS_SETTINGS = {
+  moderationMode: 'auto',
+  publicSubmissionsEnabled: true,
+}
 
 const ALLOWED_MEDIA_MIME = new Set([
   'image/png',
@@ -199,6 +232,86 @@ async function ensureDatabaseReady(db) {
         fail_count INTEGER NOT NULL,
         first_fail_at INTEGER NOT NULL,
         locked_until INTEGER NOT NULL
+      )`
+    )
+    .run()
+
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS reviews (
+        id TEXT PRIMARY KEY,
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        target_title TEXT NOT NULL,
+        rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+        reviewer_name TEXT NOT NULL,
+        reviewer_role TEXT NOT NULL DEFAULT '',
+        relationship TEXT NOT NULL DEFAULT '',
+        comment TEXT NOT NULL,
+        profiles_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'approved',
+        verified INTEGER NOT NULL DEFAULT 0,
+        verified_label TEXT NOT NULL DEFAULT '',
+        featured INTEGER NOT NULL DEFAULT 0,
+        owner_reply TEXT NOT NULL DEFAULT '',
+        owner_reply_at TEXT NOT NULL DEFAULT '',
+        invite_id TEXT NOT NULL DEFAULT '',
+        challenge_nonce TEXT NOT NULL DEFAULT '',
+        ip_hash TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`
+    )
+    .run()
+
+  await db
+    .prepare(
+      'CREATE INDEX IF NOT EXISTS idx_reviews_status_created ON reviews (status, created_at DESC)'
+    )
+    .run()
+
+  await db
+    .prepare(
+      'CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews (target_type, target_id, status)'
+    )
+    .run()
+
+  await db
+    .prepare(
+      'CREATE INDEX IF NOT EXISTS idx_reviews_nonce ON reviews (challenge_nonce)'
+    )
+    .run()
+
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS review_invites (
+        id TEXT PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        label TEXT NOT NULL DEFAULT 'Verified Collaborator',
+        target_type TEXT NOT NULL DEFAULT '',
+        target_id TEXT NOT NULL DEFAULT '',
+        max_uses INTEGER NOT NULL DEFAULT 1,
+        use_count INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1,
+        expires_at TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      )`
+    )
+    .run()
+
+  await db
+    .prepare(
+      'CREATE INDEX IF NOT EXISTS idx_review_invites_code ON review_invites (code)'
+    )
+    .run()
+
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS review_rate_limits (
+        ip_hash TEXT PRIMARY KEY,
+        submission_count INTEGER NOT NULL,
+        window_start INTEGER NOT NULL,
+        last_submitted_at INTEGER NOT NULL
       )`
     )
     .run()
@@ -443,6 +556,300 @@ async function clearLoginFailures(db, ipHash) {
     .run()
 }
 
+function cleanSingleLine(value, maxLen) {
+  return String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen)
+}
+
+function cleanMultiline(value, maxLen) {
+  return String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, maxLen)
+}
+
+function parseJsonArraySafe(raw) {
+  try {
+    const parsed = JSON.parse(raw || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function serializePublicReview(row) {
+  return {
+    id: row.id,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    targetTitle: row.target_title,
+    rating: Number(row.rating),
+    reviewerName: row.reviewer_name,
+    reviewerRole: row.reviewer_role || '',
+    relationship: row.relationship || '',
+    comment: row.comment,
+    profiles: parseJsonArraySafe(row.profiles_json),
+    verified: Boolean(row.verified),
+    verifiedLabel: row.verified_label || (row.verified ? 'Verified Collaborator' : ''),
+    featured: Boolean(row.featured),
+    ownerReply: row.owner_reply || '',
+    ownerReplyAt: row.owner_reply_at || '',
+    createdAt: row.created_at,
+  }
+}
+
+function serializeAdminReview(row) {
+  return {
+    ...serializePublicReview(row),
+    status: row.status || 'approved',
+    inviteUsed: Boolean(row.invite_id),
+    updatedAt: row.updated_at || row.created_at,
+  }
+}
+
+function serializeReviewInvite(row) {
+  const maxUses = Number(row.max_uses || 0)
+  const useCount = Number(row.use_count || 0)
+  const isExpired = Boolean(row.expires_at && row.expires_at <= new Date().toISOString())
+  const isExhausted = maxUses > 0 && useCount >= maxUses
+  return {
+    id: row.id,
+    code: row.code,
+    label: row.label || 'Verified Collaborator',
+    targetType: row.target_type || '',
+    targetId: row.target_id || '',
+    maxUses,
+    useCount,
+    remainingUses: maxUses > 0 ? Math.max(0, maxUses - useCount) : null,
+    active: Boolean(row.active) && !isExpired && !isExhausted,
+    expired: isExpired,
+    exhausted: isExhausted,
+    expiresAt: row.expires_at || '',
+    createdAt: row.created_at,
+  }
+}
+
+function generateInviteCode(length = 8) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  const bytes = new Uint8Array(length)
+  crypto.getRandomValues(bytes)
+  let out = ''
+  for (let i = 0; i < length; i += 1) {
+    out += alphabet[bytes[i] % alphabet.length]
+  }
+  return out
+}
+
+async function getReviewsSettings(env) {
+  if (!env.DB) return { ...DEFAULT_REVIEWS_SETTINGS }
+  await ensureDatabaseReady(env.DB)
+  const row = await env.DB.prepare(
+    'SELECT value FROM internal_config WHERE key = ?'
+  )
+    .bind('reviews_settings')
+    .first()
+  if (!row?.value) {
+    return { ...DEFAULT_REVIEWS_SETTINGS }
+  }
+  try {
+    const parsed = JSON.parse(row.value)
+    return {
+      moderationMode: parsed?.moderationMode === 'manual' ? 'manual' : 'auto',
+      publicSubmissionsEnabled: parsed?.publicSubmissionsEnabled !== false,
+    }
+  } catch {
+    return { ...DEFAULT_REVIEWS_SETTINGS }
+  }
+}
+
+async function saveReviewsSettings(env, nextSettings) {
+  const normalized = {
+    moderationMode: nextSettings?.moderationMode === 'manual' ? 'manual' : 'auto',
+    publicSubmissionsEnabled: nextSettings?.publicSubmissionsEnabled !== false,
+  }
+  const now = new Date().toISOString()
+  await env.DB.prepare(
+    `INSERT INTO internal_config (key, value, updated_at)
+     VALUES ('reviews_settings', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET
+       value = excluded.value,
+       updated_at = excluded.updated_at`
+  )
+    .bind(JSON.stringify(normalized), now)
+    .run()
+  return normalized
+}
+
+async function readApprovedReviewsAndSummary(db) {
+  if (!db) {
+    return {
+      reviews: [],
+      summary: computeReviewsSummary([]),
+    }
+  }
+  await ensureDatabaseReady(db)
+  const { results } = await db
+    .prepare(
+      `SELECT id, target_type, target_id, target_title, rating,
+              reviewer_name, reviewer_role, relationship, comment,
+              profiles_json, verified, verified_label, featured,
+              owner_reply, owner_reply_at, created_at
+       FROM reviews
+       WHERE status = 'approved'
+       ORDER BY featured DESC, created_at DESC
+       LIMIT 200`
+    )
+    .all()
+  const reviews = (results || []).map(serializePublicReview)
+  return {
+    reviews,
+    summary: computeReviewsSummary(reviews),
+  }
+}
+
+async function issueReviewChallenge(secret) {
+  if (!secret) return null
+  return signSessionToken(
+    {
+      typ: 'review-challenge',
+      iat: Date.now(),
+      exp: Date.now() + REVIEW_CHALLENGE_TTL_MS,
+      nonce: crypto.randomUUID(),
+    },
+    secret
+  )
+}
+
+async function verifyReviewChallenge(token, secret) {
+  if (!secret || !token) {
+    return { ok: false, reason: 'missing' }
+  }
+  const payload = await verifySessionToken(token, secret)
+  if (!payload || payload.typ !== 'review-challenge' || typeof payload.iat !== 'number' || !payload.nonce) {
+    return { ok: false, reason: 'invalid' }
+  }
+  if (Date.now() - payload.iat < REVIEW_MIN_FILL_MS) {
+    return { ok: false, reason: 'too-fast' }
+  }
+  return { ok: true, nonce: String(payload.nonce) }
+}
+
+async function checkReviewRateLimit(db, ipHash) {
+  if (!db || !ipHash) return { blocked: false, retryAfterSec: 0 }
+  const row = await db
+    .prepare(
+      'SELECT submission_count, window_start, last_submitted_at FROM review_rate_limits WHERE ip_hash = ?'
+    )
+    .bind(ipHash)
+    .first()
+  if (!row) return { blocked: false, retryAfterSec: 0 }
+
+  const now = Date.now()
+  const cooldownRemainingMs = REVIEW_COOLDOWN_MS - (now - Number(row.last_submitted_at || 0))
+  if (cooldownRemainingMs > 0) {
+    return {
+      blocked: true,
+      reason: 'cooldown',
+      retryAfterSec: Math.max(1, Math.ceil(cooldownRemainingMs / 1000)),
+    }
+  }
+
+  const windowElapsed = now - Number(row.window_start || 0)
+  if (windowElapsed <= REVIEW_RATE_WINDOW_MS && Number(row.submission_count || 0) >= MAX_REVIEWS_PER_WINDOW) {
+    return {
+      blocked: true,
+      reason: 'window',
+      retryAfterSec: Math.max(1, Math.ceil((REVIEW_RATE_WINDOW_MS - windowElapsed) / 1000)),
+    }
+  }
+
+  return { blocked: false, retryAfterSec: 0 }
+}
+
+async function recordReviewSubmission(db, ipHash) {
+  if (!db || !ipHash) return
+  const now = Date.now()
+  const row = await db
+    .prepare(
+      'SELECT submission_count, window_start FROM review_rate_limits WHERE ip_hash = ?'
+    )
+    .bind(ipHash)
+    .first()
+
+  let submissionCount = 1
+  let windowStart = now
+  if (row && now - Number(row.window_start || 0) <= REVIEW_RATE_WINDOW_MS) {
+    submissionCount = Number(row.submission_count || 0) + 1
+    windowStart = Number(row.window_start || now)
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO review_rate_limits (ip_hash, submission_count, window_start, last_submitted_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(ip_hash) DO UPDATE SET
+         submission_count = excluded.submission_count,
+         window_start = excluded.window_start,
+         last_submitted_at = excluded.last_submitted_at`
+    )
+    .bind(ipHash, submissionCount, windowStart, now)
+    .run()
+}
+
+async function verifyTurnstileIfConfigured(env, token, remoteIp) {
+  const siteKey = env.TURNSTILE_SITE_KEY?.trim()
+  const secretKey = env.TURNSTILE_SECRET_KEY?.trim()
+  if (!siteKey || !secretKey) {
+    return { required: false, ok: true }
+  }
+  if (!token || typeof token !== 'string') {
+    return { required: true, ok: false }
+  }
+  try {
+    const formData = new FormData()
+    formData.append('secret', secretKey)
+    formData.append('response', token)
+    if (remoteIp) formData.append('remoteip', remoteIp)
+
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      body: formData,
+    })
+    const result = await res.json().catch(() => null)
+    return { required: true, ok: Boolean(result?.success) }
+  } catch {
+    return { required: true, ok: false }
+  }
+}
+
+async function findActiveInviteByCode(db, rawCode) {
+  const normalizedCode = String(rawCode || '').trim().toUpperCase()
+  if (!normalizedCode || normalizedCode.length > 32) {
+    return { invite: null, reason: 'Invalid invite code.' }
+  }
+  const row = await db
+    .prepare('SELECT * FROM review_invites WHERE UPPER(code) = ?')
+    .bind(normalizedCode)
+    .first()
+  if (!row || !row.active) {
+    return { invite: null, reason: 'This invite link is inactive or no longer exists.' }
+  }
+  const nowIso = new Date().toISOString()
+  if (row.expires_at && row.expires_at <= nowIso) {
+    return { invite: null, reason: 'This invite link has expired.' }
+  }
+  const maxUses = Number(row.max_uses || 0)
+  const useCount = Number(row.use_count || 0)
+  if (maxUses > 0 && useCount >= maxUses) {
+    return { invite: null, reason: 'This invite link has already been used.' }
+  }
+  return { invite: row, reason: '' }
+}
+
 function validatePortfolioUrls(data) {
   const check = (value, allowMailto = false) => {
     if (!isSafeMediaOrLinkUrl(value, allowMailto)) {
@@ -453,6 +860,8 @@ function validatePortfolioUrls(data) {
   check(data.hero?.primaryCta?.href || '', true)
   check(data.hero?.secondaryCta?.href || '', true)
   check(data.about?.image?.src || '', false)
+  if (data.site?.seo?.canonicalUrl) check(data.site.seo.canonicalUrl, false)
+  if (data.site?.seo?.ogImage) check(data.site.seo.ogImage, false)
 
   for (const link of data.site?.navLinks || []) {
     check(link.href || '', false)
@@ -704,6 +1113,354 @@ async function handleApi(request, env, url) {
   if (path === '/api/portfolio' && request.method === 'GET') {
     const result = await readPortfolioFromDb(env)
     return jsonResponse(result)
+  }
+
+  if (path === '/api/reviews' && request.method === 'GET') {
+    if (!env.DB) {
+      return jsonResponse({
+        reviews: [],
+        summary: computeReviewsSummary([]),
+        settings: DEFAULT_REVIEWS_SETTINGS,
+        challengeToken: null,
+        turnstileSiteKey: null,
+        storageAvailable: false,
+      })
+    }
+
+    await ensureDatabaseReady(env.DB)
+    const [reviewPayload, settings, secret] = await Promise.all([
+      readApprovedReviewsAndSummary(env.DB),
+      getReviewsSettings(env),
+      getSessionSecret(env),
+    ])
+    const challengeToken = await issueReviewChallenge(secret)
+
+    return jsonResponse({
+      reviews: reviewPayload.reviews,
+      summary: reviewPayload.summary,
+      settings,
+      challengeToken,
+      turnstileSiteKey: env.TURNSTILE_SITE_KEY?.trim() || null,
+      storageAvailable: true,
+    })
+  }
+
+  if (path === '/api/reviews/invite' && request.method === 'GET') {
+    if (!env.DB) {
+      return jsonResponse({ valid: false, reason: 'Reviews database unavailable.' }, 503)
+    }
+    await ensureDatabaseReady(env.DB)
+    const code = url.searchParams.get('code') || ''
+    const { invite, reason } = await findActiveInviteByCode(env.DB, code)
+    if (!invite) {
+      return jsonResponse({ valid: false, reason })
+    }
+    const maxUses = Number(invite.max_uses || 0)
+    const useCount = Number(invite.use_count || 0)
+    return jsonResponse({
+      valid: true,
+      code: invite.code,
+      label: invite.label || 'Verified Collaborator',
+      targetType: invite.target_type || '',
+      targetId: invite.target_id || '',
+      remainingUses: maxUses > 0 ? Math.max(0, maxUses - useCount) : null,
+    })
+  }
+
+  if (path === '/api/reviews' && request.method === 'POST') {
+    if (!assertSameOrigin(request)) {
+      return jsonResponse({ error: 'Invalid request origin.' }, 403)
+    }
+    if (!env.DB) {
+      return jsonResponse(
+        { error: 'Reviews storage is temporarily unavailable.' },
+        503
+      )
+    }
+    await ensureDatabaseReady(env.DB)
+
+    const rawText = await request.text()
+    if (rawText.length > MAX_REVIEW_BODY_BYTES) {
+      return jsonResponse({ error: 'Review payload is too large.' }, 413)
+    }
+
+    let body
+    try {
+      body = JSON.parse(rawText)
+    } catch {
+      return jsonResponse({ error: 'Invalid JSON request payload.' }, 400)
+    }
+
+    if (
+      typeof body?.sji_verification_code_trap === 'string' &&
+      body.sji_verification_code_trap.trim().length > 0
+    ) {
+      return jsonResponse({ error: 'Submission rejected by spam check.' }, 400)
+    }
+
+    const secret = await getSessionSecret(env)
+    const challenge = await verifyReviewChallenge(body?.challengeToken, secret)
+    if (!challenge.ok) {
+      const freshChallenge = await issueReviewChallenge(secret)
+      return jsonResponse(
+        {
+          error:
+            challenge.reason === 'too-fast'
+              ? 'Please take a couple of seconds to review your feedback before submitting.'
+              : 'Your review session expired. Please submit again.',
+          challengeToken: freshChallenge,
+        },
+        400
+      )
+    }
+
+    const reusedNonce = await env.DB.prepare(
+      'SELECT id FROM reviews WHERE challenge_nonce = ?'
+    )
+      .bind(challenge.nonce)
+      .first()
+    if (reusedNonce) {
+      const freshChallenge = await issueReviewChallenge(secret)
+      return jsonResponse(
+        {
+          error: 'This review session was already submitted. Ready for a new review.',
+          challengeToken: freshChallenge,
+        },
+        400
+      )
+    }
+
+    const remoteIp =
+      request.headers.get('CF-Connecting-IP') ||
+      request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
+      ''
+    const turnstile = await verifyTurnstileIfConfigured(
+      env,
+      body?.turnstileToken,
+      remoteIp
+    )
+    if (turnstile.required && !turnstile.ok) {
+      return jsonResponse(
+        { error: 'Human verification check failed. Please try again.' },
+        400
+      )
+    }
+
+    const ipHash = await getClientIpHash(request, secret)
+    const rateState = await checkReviewRateLimit(env.DB, ipHash)
+    if (rateState.blocked) {
+      return jsonResponse(
+        {
+          error:
+            rateState.reason === 'cooldown'
+              ? `Please wait ${rateState.retryAfterSec} seconds before submitting another review.`
+              : `Review rate limit reached. Try again in ${Math.ceil(rateState.retryAfterSec / 60)} minutes.`,
+          retryAfterSec: rateState.retryAfterSec,
+        },
+        429,
+        { 'Retry-After': String(rateState.retryAfterSec) }
+      )
+    }
+
+    const settings = await getReviewsSettings(env)
+    const rawInviteCode = typeof body?.inviteCode === 'string' ? body.inviteCode.trim() : ''
+    let activeInvite = null
+    if (rawInviteCode) {
+      const lookup = await findActiveInviteByCode(env.DB, rawInviteCode)
+      if (!lookup.invite) {
+        return jsonResponse(
+          { error: lookup.reason || 'Invalid or expired invite link.' },
+          400
+        )
+      }
+      activeInvite = lookup.invite
+    } else if (!settings.publicSubmissionsEnabled) {
+      return jsonResponse(
+        { error: 'Public reviews currently require a collaborator invite link.' },
+        403
+      )
+    }
+
+    const portfolioResult = await readPortfolioFromDb(env)
+    const visibleProjects = (portfolioResult.data?.projects || []).filter(
+      (project) => project && project.visible !== false
+    )
+
+    const requestedTargetType =
+      body?.targetType === 'project' ? 'project' : 'overall'
+    const requestedTargetId =
+      requestedTargetType === 'project'
+        ? String(body?.targetId || '').trim()
+        : 'overall'
+
+    let targetTitle = 'Samuel John-Ibro (Overall)'
+    if (requestedTargetType === 'project') {
+      const matchedProject = visibleProjects.find((p) => p.id === requestedTargetId)
+      if (!matchedProject) {
+        return jsonResponse(
+          { error: 'Please select a valid project or Overall portfolio.' },
+          400
+        )
+      }
+      targetTitle = matchedProject.title
+    }
+
+    const rating = Number(body?.rating)
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return jsonResponse({ error: 'Please choose a 1 to 5 star rating.' }, 400)
+    }
+
+    const reviewerName = cleanSingleLine(body?.reviewerName, MAX_REVIEWER_NAME_LENGTH)
+    if (reviewerName.length < 2) {
+      return jsonResponse(
+        { error: 'Please enter your name (at least 2 characters).' },
+        400
+      )
+    }
+
+    const reviewerRole = cleanSingleLine(body?.reviewerRole, MAX_REVIEWER_ROLE_LENGTH)
+    const relationship = cleanSingleLine(body?.relationship, MAX_RELATIONSHIP_LENGTH)
+    const comment = cleanMultiline(body?.comment, MAX_REVIEW_COMMENT_LENGTH)
+    if (comment.length < MIN_REVIEW_COMMENT_LENGTH) {
+      return jsonResponse(
+        {
+          error: `Please write at least ${MIN_REVIEW_COMMENT_LENGTH} characters in your review.`,
+        },
+        400
+      )
+    }
+
+    const rawProfiles = Array.isArray(body?.profiles) ? body.profiles : []
+    const nonEmptyProfileInputs = rawProfiles.filter((entry) => {
+      const u = typeof entry === 'string' ? entry : entry?.url
+      return typeof u === 'string' && u.trim().length > 0
+    })
+    if (nonEmptyProfileInputs.length > MAX_PROFILES_PER_REVIEW) {
+      return jsonResponse(
+        { error: `You can attach up to ${MAX_PROFILES_PER_REVIEW} profile pages.` },
+        400
+      )
+    }
+
+    const { profiles, invalidUrls } = normalizeProfileLinks(rawProfiles)
+    if (invalidUrls.length > 0) {
+      return jsonResponse(
+        {
+          error:
+            'One or more profile URLs look invalid. Use real public URLs like https://linkedin.com/in/username or https://github.com/username.',
+        },
+        400
+      )
+    }
+
+    const duplicateWindowCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const duplicate = await env.DB.prepare(
+      `SELECT id FROM reviews
+       WHERE ip_hash = ? AND target_id = ? AND comment = ? AND created_at > ?`
+    )
+      .bind(ipHash, requestedTargetId, comment, duplicateWindowCutoff)
+      .first()
+    if (duplicate) {
+      return jsonResponse(
+        { error: 'This exact review has already been submitted.' },
+        409
+      )
+    }
+
+    const nowIso = new Date().toISOString()
+    let verified = 0
+    let verifiedLabel = ''
+    let inviteId = ''
+    let status = settings.moderationMode === 'manual' ? 'pending' : 'approved'
+
+    if (activeInvite) {
+      const inviteUpdate = await env.DB.prepare(
+        `UPDATE review_invites
+         SET use_count = use_count + 1
+         WHERE id = ?
+           AND active = 1
+           AND (max_uses <= 0 OR use_count < max_uses)
+           AND (expires_at = '' OR expires_at > ?)`
+      )
+        .bind(activeInvite.id, nowIso)
+        .run()
+
+      if (Number(inviteUpdate?.meta?.changes || 0) !== 1) {
+        return jsonResponse(
+          { error: 'This invite link has expired or reached its usage limit.' },
+          400
+        )
+      }
+      verified = 1
+      verifiedLabel = activeInvite.label || 'Verified Collaborator'
+      inviteId = activeInvite.id
+      status = 'approved'
+    }
+
+    const reviewId = crypto.randomUUID().replace(/-/g, '')
+    await env.DB.prepare(
+      `INSERT INTO reviews (
+        id, target_type, target_id, target_title, rating,
+        reviewer_name, reviewer_role, relationship, comment,
+        profiles_json, status, verified, verified_label, featured,
+        owner_reply, owner_reply_at, invite_id, challenge_nonce,
+        ip_hash, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        reviewId,
+        requestedTargetType,
+        requestedTargetId,
+        targetTitle,
+        rating,
+        reviewerName,
+        reviewerRole,
+        relationship,
+        comment,
+        JSON.stringify(profiles),
+        status,
+        verified,
+        verifiedLabel,
+        inviteId,
+        challenge.nonce,
+        ipHash,
+        nowIso,
+        nowIso
+      )
+      .run()
+
+    await recordReviewSubmission(env.DB, ipHash)
+
+    const insertedRow = await env.DB.prepare(
+      `SELECT id, target_type, target_id, target_title, rating,
+              reviewer_name, reviewer_role, relationship, comment,
+              profiles_json, verified, verified_label, featured,
+              owner_reply, owner_reply_at, created_at
+       FROM reviews WHERE id = ?`
+    )
+      .bind(reviewId)
+      .first()
+
+    const [updatedFeed, freshChallenge] = await Promise.all([
+      readApprovedReviewsAndSummary(env.DB),
+      issueReviewChallenge(secret),
+    ])
+
+    return jsonResponse(
+      {
+        ok: true,
+        status,
+        review: insertedRow ? serializePublicReview(insertedRow) : null,
+        reviews: updatedFeed.reviews,
+        summary: updatedFeed.summary,
+        challengeToken: freshChallenge,
+        message:
+          status === 'approved'
+            ? 'Thank you! Your review is now live.'
+            : 'Thank you! Your review has been submitted and is awaiting approval.',
+      },
+      201
+    )
   }
 
   if (path === '/api/admin/session' && request.method === 'GET') {
@@ -1067,7 +1824,563 @@ async function handleApi(request, env, url) {
     return jsonResponse({ ok: true })
   }
 
+  if (path === '/api/admin/reviews' && request.method === 'GET') {
+    const [reviewsResult, invitesResult, settings] = await Promise.all([
+      env.DB.prepare(
+        `SELECT id, target_type, target_id, target_title, rating,
+                reviewer_name, reviewer_role, relationship, comment,
+                profiles_json, status, verified, verified_label, featured,
+                owner_reply, owner_reply_at, invite_id, created_at, updated_at
+         FROM reviews
+         ORDER BY created_at DESC`
+      ).all(),
+      env.DB.prepare(
+        'SELECT * FROM review_invites ORDER BY created_at DESC'
+      ).all(),
+      getReviewsSettings(env),
+    ])
+
+    const allReviews = (reviewsResult?.results || []).map(serializeAdminReview)
+    const approvedReviews = allReviews.filter((r) => r.status === 'approved')
+    const invites = (invitesResult?.results || []).map(serializeReviewInvite)
+
+    return jsonResponse({
+      reviews: allReviews,
+      summary: computeReviewsSummary(approvedReviews),
+      counts: {
+        total: allReviews.length,
+        approved: approvedReviews.length,
+        pending: allReviews.filter((r) => r.status === 'pending').length,
+        hidden: allReviews.filter((r) => r.status === 'hidden').length,
+      },
+      settings,
+      invites,
+    })
+  }
+
+  if (path === '/api/admin/reviews/settings' && request.method === 'PUT') {
+    let body
+    try {
+      body = await request.json()
+    } catch {
+      return jsonResponse({ error: 'Invalid JSON payload.' }, 400)
+    }
+    const settings = await saveReviewsSettings(env, body)
+    return jsonResponse({ ok: true, settings })
+  }
+
+  if (path === '/api/admin/reviews/invites' && request.method === 'POST') {
+    let body
+    try {
+      body = await request.json()
+    } catch {
+      return jsonResponse({ error: 'Invalid JSON payload.' }, 400)
+    }
+
+    const label =
+      cleanSingleLine(body?.label, 40) || 'Verified Collaborator'
+    const targetType =
+      body?.targetType === 'project'
+        ? 'project'
+        : body?.targetType === 'overall'
+          ? 'overall'
+          : ''
+    const targetId =
+      targetType === 'project'
+        ? cleanSingleLine(body?.targetId, 80)
+        : targetType === 'overall'
+          ? 'overall'
+          : ''
+    const rawMaxUses = Number(body?.maxUses)
+    const maxUses =
+      Number.isInteger(rawMaxUses) && rawMaxUses >= 0 && rawMaxUses <= 500
+        ? rawMaxUses
+        : 1
+    const rawDays = Number(body?.expiresInDays)
+    const expiresAt =
+      Number.isInteger(rawDays) && rawDays > 0 && rawDays <= 365
+        ? new Date(Date.now() + rawDays * 24 * 60 * 60 * 1000).toISOString()
+        : ''
+
+    const id = crypto.randomUUID().replace(/-/g, '')
+    const code = generateInviteCode(8)
+    const nowIso = new Date().toISOString()
+
+    await env.DB.prepare(
+      `INSERT INTO review_invites (
+        id, code, label, target_type, target_id,
+        max_uses, use_count, active, expires_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)`
+    )
+      .bind(id, code, label, targetType, targetId, maxUses, expiresAt, nowIso)
+      .run()
+
+    const row = await env.DB.prepare('SELECT * FROM review_invites WHERE id = ?')
+      .bind(id)
+      .first()
+
+    return jsonResponse({
+      ok: true,
+      invite: row ? serializeReviewInvite(row) : null,
+    })
+  }
+
+  const deleteInviteMatch = path.match(/^\/api\/admin\/reviews\/invites\/([a-zA-Z0-9-]+)$/)
+  if (deleteInviteMatch && request.method === 'DELETE') {
+    const inviteId = deleteInviteMatch[1]
+    await env.DB.prepare('DELETE FROM review_invites WHERE id = ?')
+      .bind(inviteId)
+      .run()
+    return jsonResponse({ ok: true })
+  }
+
+  const adminReviewMatch = path.match(/^\/api\/admin\/reviews\/([a-zA-Z0-9-]+)$/)
+  if (adminReviewMatch && request.method === 'PATCH') {
+    const reviewId = adminReviewMatch[1]
+    const existingRow = await env.DB.prepare('SELECT * FROM reviews WHERE id = ?')
+      .bind(reviewId)
+      .first()
+    if (!existingRow) {
+      return jsonResponse({ error: 'Review not found.' }, 404)
+    }
+
+    let body
+    try {
+      body = await request.json()
+    } catch {
+      return jsonResponse({ error: 'Invalid JSON payload.' }, 400)
+    }
+
+    const nextStatus = ['approved', 'pending', 'hidden'].includes(body?.status)
+      ? body.status
+      : existingRow.status
+    const nextVerified =
+      typeof body?.verified === 'boolean'
+        ? body.verified
+          ? 1
+          : 0
+        : Number(existingRow.verified || 0)
+    const nextVerifiedLabel =
+      typeof body?.verifiedLabel === 'string'
+        ? cleanSingleLine(body.verifiedLabel, 40)
+        : existingRow.verified_label || ''
+    const nextFeatured =
+      typeof body?.featured === 'boolean'
+        ? body.featured
+          ? 1
+          : 0
+        : Number(existingRow.featured || 0)
+
+    let nextReply = existingRow.owner_reply || ''
+    let nextReplyAt = existingRow.owner_reply_at || ''
+    if (typeof body?.ownerReply === 'string') {
+      nextReply = cleanMultiline(body.ownerReply, MAX_OWNER_REPLY_LENGTH)
+      if (!nextReply) {
+        nextReplyAt = ''
+      } else if (nextReply !== (existingRow.owner_reply || '') || !nextReplyAt) {
+        nextReplyAt = new Date().toISOString()
+      }
+    }
+
+    const nowIso = new Date().toISOString()
+    await env.DB.prepare(
+      `UPDATE reviews
+       SET status = ?,
+           verified = ?,
+           verified_label = ?,
+           featured = ?,
+           owner_reply = ?,
+           owner_reply_at = ?,
+           updated_at = ?
+       WHERE id = ?`
+    )
+      .bind(
+        nextStatus,
+        nextVerified,
+        nextVerifiedLabel,
+        nextFeatured,
+        nextReply,
+        nextReplyAt,
+        nowIso,
+        reviewId
+      )
+      .run()
+
+    const updatedRow = await env.DB.prepare('SELECT * FROM reviews WHERE id = ?')
+      .bind(reviewId)
+      .first()
+
+    return jsonResponse({
+      ok: true,
+      review: updatedRow ? serializeAdminReview(updatedRow) : null,
+    })
+  }
+
+  if (adminReviewMatch && request.method === 'DELETE') {
+    const reviewId = adminReviewMatch[1]
+    await env.DB.prepare('DELETE FROM reviews WHERE id = ?')
+      .bind(reviewId)
+      .run()
+    return jsonResponse({ ok: true })
+  }
+
   return jsonResponse({ error: 'API route not found.' }, 404)
+}
+
+const SECTION_REDIRECT_SLUGS = new Set([
+  'about',
+  'projects',
+  'skills',
+  'training',
+  'credentials',
+  'extras',
+  'reviews',
+  'contact',
+])
+
+function escapeHtmlAttr(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+async function fetchAppHtmlShell(env, url) {
+  if (!env.ASSETS) return null
+  const shellRequest = new Request(new URL('/', url.origin).href, {
+    method: 'GET',
+  })
+  const res = await env.ASSETS.fetch(shellRequest)
+  if (!res.ok) return null
+  return res
+}
+
+function buildNotFoundHtml(origin, brandName = 'Samuel John-Ibro') {
+  const safeBrand = escapeHtmlAttr(brandName)
+  const safeOrigin = escapeHtmlAttr(`${origin}/`)
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>404 — Page Not Found | ${safeBrand}</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #070707;
+        color: #f5f5f5;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        padding: 24px;
+        text-align: center;
+      }
+      .box {
+        max-width: 480px;
+        padding: 36px 28px;
+        border: 1px solid rgba(163, 163, 163, 0.2);
+        border-radius: 16px;
+        background: rgba(18, 18, 18, 0.85);
+      }
+      .code {
+        color: #c89b3c;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 12px 0;
+        font-size: 1.75rem;
+      }
+      p {
+        color: #9a9a9a;
+        line-height: 1.6;
+        margin-bottom: 24px;
+      }
+      a {
+        display: inline-flex;
+        align-items: center;
+        padding: 11px 22px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #8b1b36 0%, #6b1228 100%);
+        color: #f5f5f5;
+        text-decoration: none;
+        font-size: 0.85rem;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="box">
+      <div class="code">404 — Not Found</div>
+      <h1>Page not found</h1>
+      <p>The requested URL does not exist on ${safeBrand}'s portfolio.</p>
+      <a href="${safeOrigin}">Return to Portfolio →</a>
+    </main>
+  </body>
+</html>`
+}
+
+async function renderAdminShellResponse(env, url) {
+  const shellRes = await fetchAppHtmlShell(env, url)
+  if (!shellRes) {
+    return new Response('Assets binding not configured.', { status: 404 })
+  }
+
+  const transformed = new HTMLRewriter()
+    .on('title', {
+      element(el) {
+        el.setInnerContent('Portfolio Studio — Admin')
+      },
+    })
+    .on('meta[name="robots"]', {
+      element(el) {
+        el.setAttribute('content', 'noindex, nofollow, noarchive')
+      },
+    })
+    .transform(shellRes)
+
+  return new Response(transformed.body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Robots-Tag': 'noindex, nofollow, noarchive',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+    },
+  })
+}
+
+async function renderPortfolioSsrResponse(request, env, url) {
+  const shellRes = await fetchAppHtmlShell(env, url)
+  if (!shellRes) {
+    return new Response('Assets binding not configured.', { status: 404 })
+  }
+
+  const [{ data, updatedAt }, reviewsPayload] = await Promise.all([
+    readPortfolioFromDb(env),
+    env.DB
+      ? readApprovedReviewsAndSummary(env.DB).catch(() => ({
+          reviews: [],
+          summary: computeReviewsSummary([]),
+        }))
+      : Promise.resolve({
+          reviews: [],
+          summary: computeReviewsSummary([]),
+        }),
+  ])
+
+  const origin = resolveCanonicalOrigin(data, request.url, env)
+  const seoMeta = resolveSeoMetadata(data, origin, env)
+  const jsonLd = buildJsonLdGraph(
+    data,
+    origin,
+    updatedAt,
+    env,
+    reviewsPayload.reviews
+  )
+  const renderYear = String(new Date().getUTCFullYear())
+
+  const headers = {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'public, max-age=0, must-revalidate',
+    'X-Robots-Tag':
+      'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+  }
+
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers })
+  }
+
+  const ssrHtml = renderToString(
+    createElement(PortfolioPage, {
+      initialData: data,
+      initialYear: renderYear,
+      initialReviews: reviewsPayload.reviews,
+      initialReviewsSummary: reviewsPayload.summary,
+    })
+  )
+
+  const bootstrapPayload = serializeJsonForHtml({
+    data,
+    pathname: '/',
+    year: renderYear,
+    reviews: reviewsPayload.reviews,
+    reviewsSummary: reviewsPayload.summary,
+  })
+
+  const extraHeadTags = [
+    ...seoMeta.sameAs.map(
+      (href) => `<link rel="me" href="${escapeHtmlAttr(href)}" />`
+    ),
+    ...(updatedAt
+      ? [
+          `<meta property="og:updated_time" content="${escapeHtmlAttr(updatedAt)}" />`,
+        ]
+      : []),
+    ...(seoMeta.googleSiteVerification
+      ? [
+          `<meta name="google-site-verification" content="${escapeHtmlAttr(seoMeta.googleSiteVerification)}" />`,
+        ]
+      : []),
+    ...(seoMeta.bingSiteVerification
+      ? [
+          `<meta name="msvalidate.01" content="${escapeHtmlAttr(seoMeta.bingSiteVerification)}" />`,
+        ]
+      : []),
+    `<script>window.__PORTFOLIO_BOOTSTRAP__=${bootstrapPayload};</script>`,
+  ].join('\n    ')
+
+  const rewriter = new HTMLRewriter()
+    .on('title', {
+      element(el) {
+        el.setInnerContent(seoMeta.title)
+      },
+    })
+    .on('meta[name="description"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.description)
+      },
+    })
+    .on('meta[name="author"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.author)
+      },
+    })
+    .on('meta[name="keywords"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.keywordsContent)
+      },
+    })
+    .on('meta[name="robots"]', {
+      element(el) {
+        el.setAttribute(
+          'content',
+          'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'
+        )
+      },
+    })
+    .on('link[rel="canonical"]', {
+      element(el) {
+        el.setAttribute('href', seoMeta.canonicalUrl)
+      },
+    })
+    .on('meta[property="og:url"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.canonicalUrl)
+      },
+    })
+    .on('meta[property="og:title"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.title)
+      },
+    })
+    .on('meta[property="og:description"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.description)
+      },
+    })
+    .on('meta[property="og:site_name"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.siteName)
+      },
+    })
+    .on('meta[property="og:image"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.ogImageUrl)
+      },
+    })
+    .on('meta[property="og:image:secure_url"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.ogImageUrl)
+      },
+    })
+    .on('meta[property="og:image:alt"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.ogImageAlt)
+      },
+    })
+    .on('meta[property="og:image:type"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.ogImageType)
+      },
+    })
+    .on('meta[property="og:image:width"]', {
+      element(el) {
+        if (seoMeta.ogImageWidth) {
+          el.setAttribute('content', seoMeta.ogImageWidth)
+        } else {
+          el.remove()
+        }
+      },
+    })
+    .on('meta[property="og:image:height"]', {
+      element(el) {
+        if (seoMeta.ogImageHeight) {
+          el.setAttribute('content', seoMeta.ogImageHeight)
+        } else {
+          el.remove()
+        }
+      },
+    })
+    .on('meta[name="twitter:card"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.twitterCard)
+      },
+    })
+    .on('meta[name="twitter:title"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.title)
+      },
+    })
+    .on('meta[name="twitter:description"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.description)
+      },
+    })
+    .on('meta[name="twitter:image"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.ogImageUrl)
+      },
+    })
+    .on('meta[name="twitter:image:alt"]', {
+      element(el) {
+        el.setAttribute('content', seoMeta.ogImageAlt)
+      },
+    })
+    .on('link[rel="me"]', {
+      element(el) {
+        el.remove()
+      },
+    })
+    .on('script#sji-structured-data', {
+      element(el) {
+        el.setInnerContent(serializeJsonForHtml(jsonLd), { html: true })
+      },
+    })
+    .on('head', {
+      element(el) {
+        el.append(extraHeadTags, { html: true })
+      },
+    })
+    .on('#root', {
+      element(el) {
+        el.setInnerContent(ssrHtml, { html: true })
+      },
+    })
+
+  const transformed = rewriter.transform(shellRes)
+  return new Response(transformed.body, {
+    status: 200,
+    headers,
+  })
 }
 
 export default {
@@ -1078,6 +2391,13 @@ export default {
       try {
         return await handleApi(request, env, url)
       } catch (error) {
+        console.error(
+          JSON.stringify({
+            message: 'api_handler_error',
+            path: url.pathname,
+            error: error?.message || 'Internal worker error.',
+          })
+        )
         return jsonResponse(
           { error: error?.message || 'Internal worker error.' },
           500
@@ -1085,7 +2405,10 @@ export default {
       }
     }
 
-    if (url.pathname.startsWith('/media/') && (request.method === 'GET' || request.method === 'HEAD')) {
+    if (
+      url.pathname.startsWith('/media/') &&
+      (request.method === 'GET' || request.method === 'HEAD')
+    ) {
       const segment = url.pathname.slice('/media/'.length).split('/')[0]
       if (segment && /^[a-zA-Z0-9-]+$/.test(segment)) {
         return handleServeMedia(request, env, segment)
@@ -1093,10 +2416,117 @@ export default {
       return new Response('Media not found', { status: 404 })
     }
 
-    if (env.ASSETS) {
-      return env.ASSETS.fetch(request)
+    if (request.method === 'GET' || request.method === 'HEAD') {
+      const normalizedPath = normalizeRoutePath(url.pathname)
+      const adminPath = normalizeRoutePath(env.ADMIN_PATH || '/admin')
+
+      if (normalizedPath === adminPath) {
+        return renderAdminShellResponse(env, url)
+      }
+
+      if (url.pathname === '/robots.txt') {
+        const { data } = await readPortfolioFromDb(env).catch(() => ({
+          data: DEFAULT_PORTFOLIO,
+        }))
+        const origin = resolveCanonicalOrigin(data, request.url, env)
+        const body = buildRobotsTxt(origin)
+        return new Response(request.method === 'HEAD' ? null : body, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'public, max-age=3600',
+          },
+        })
+      }
+
+      if (url.pathname === '/sitemap.xml') {
+        const { data, updatedAt } = await readPortfolioFromDb(env).catch(
+          () => ({
+            data: DEFAULT_PORTFOLIO,
+            updatedAt: null,
+          })
+        )
+        const origin = resolveCanonicalOrigin(data, request.url, env)
+        const xml = buildSitemapXml(data, origin, updatedAt)
+        return new Response(request.method === 'HEAD' ? null : xml, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/xml; charset=utf-8',
+            'Cache-Control': 'public, max-age=300',
+          },
+        })
+      }
+
+      if (url.pathname === '/llms.txt') {
+        const [{ data }, reviewsPayload] = await Promise.all([
+          readPortfolioFromDb(env).catch(() => ({ data: DEFAULT_PORTFOLIO })),
+          env.DB
+            ? readApprovedReviewsAndSummary(env.DB).catch(() => ({
+                reviews: [],
+              }))
+            : Promise.resolve({ reviews: [] }),
+        ])
+        const origin = resolveCanonicalOrigin(data, request.url, env)
+        const body = buildLlmsTxt(data, origin, reviewsPayload.reviews)
+        return new Response(request.method === 'HEAD' ? null : body, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'public, max-age=300',
+          },
+        })
+      }
+
+      if (url.pathname === '/index.html' || url.pathname === '/home') {
+        const { data } = await readPortfolioFromDb(env).catch(() => ({
+          data: DEFAULT_PORTFOLIO,
+        }))
+        const origin = resolveCanonicalOrigin(data, request.url, env)
+        return Response.redirect(`${origin}/`, 301)
+      }
+
+      const sectionSlug = normalizedPath.slice(1).toLowerCase()
+      if (SECTION_REDIRECT_SLUGS.has(sectionSlug)) {
+        const { data } = await readPortfolioFromDb(env).catch(() => ({
+          data: DEFAULT_PORTFOLIO,
+        }))
+        const origin = resolveCanonicalOrigin(data, request.url, env)
+        return Response.redirect(`${origin}/#${sectionSlug}`, 301)
+      }
+
+      if (url.pathname === '/') {
+        try {
+          return await renderPortfolioSsrResponse(request, env, url)
+        } catch (error) {
+          console.error(
+            JSON.stringify({
+              message: 'ssr_render_error',
+              path: url.pathname,
+              error: error?.message || 'SSR failed',
+            })
+          )
+        }
+      }
     }
 
-    return new Response('Assets binding not configured.', { status: 404 })
+    if (env.ASSETS) {
+      const assetRes = await env.ASSETS.fetch(request)
+      if (assetRes.status !== 404) {
+        return assetRes
+      }
+    }
+
+    const origin = resolveCanonicalOrigin(DEFAULT_PORTFOLIO, request.url, env)
+    return new Response(
+      request.method === 'HEAD' ? null : buildNotFoundHtml(origin),
+      {
+        status: 404,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-Robots-Tag': 'noindex, nofollow',
+        },
+      }
+    )
   },
 }

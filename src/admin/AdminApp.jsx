@@ -10,7 +10,12 @@ import {
   sortProjectsByStatusAndTimeline,
   toEmbedUrl,
 } from '../data/defaultPortfolio.js'
+import {
+  collectDynamicKeywords,
+  resolveCanonicalOrigin,
+} from '../seo/portfolioSeo.js'
 import { MediaField } from './MediaField.jsx'
+import { ReviewsAdminPanel } from './ReviewsAdminPanel.jsx'
 import { formatBytes, uploadMediaFile } from './mediaUpload.js'
 import { evaluatePasswordStrength, generatePasswordHash } from './passwordCrypto.js'
 import './admin.css'
@@ -24,6 +29,7 @@ const TABS = [
   { id: 'training', label: 'Training' },
   { id: 'credentials', label: 'Credentials' },
   { id: 'extras', label: 'Extras' },
+  { id: 'reviews', label: 'Reviews' },
   { id: 'contact', label: 'Contact' },
   { id: 'media', label: 'Media Vault' },
   { id: 'security', label: 'Security' },
@@ -259,6 +265,13 @@ export default function AdminApp() {
   )
   const [updatedAt, setUpdatedAt] = useState(null)
   const [uploadedMedia, setUploadedMedia] = useState([])
+  const [reviewsState, setReviewsState] = useState({
+    reviews: [],
+    summary: { totalCount: 0, averageRating: 0 },
+    counts: { total: 0, approved: 0, pending: 0, hidden: 0 },
+    settings: { moderationMode: 'auto', publicSubmissionsEnabled: true },
+    invites: [],
+  })
   const [isSaving, setIsSaving] = useState(false)
   const [vaultUploading, setVaultUploading] = useState(false)
   const [vaultProgress, setVaultProgress] = useState(0)
@@ -290,10 +303,33 @@ export default function AdminApp() {
     }
   }, [])
 
+  const loadAdminReviews = useCallback(async () => {
+    const res = await fetch('/api/admin/reviews', { cache: 'no-store' })
+    if (res.ok) {
+      const rPayload = await res.json()
+      setReviewsState({
+        reviews: rPayload.reviews || [],
+        summary: rPayload.summary || { totalCount: 0, averageRating: 0 },
+        counts: rPayload.counts || {
+          total: 0,
+          approved: 0,
+          pending: 0,
+          hidden: 0,
+        },
+        settings: rPayload.settings || {
+          moderationMode: 'auto',
+          publicSubmissionsEnabled: true,
+        },
+        invites: rPayload.invites || [],
+      })
+    }
+  }, [])
+
   const loadAdminWorkspace = useCallback(async () => {
     const [portfolioRes, mediaRes] = await Promise.all([
       fetch('/api/admin/portfolio', { cache: 'no-store' }),
       fetch('/api/admin/media', { cache: 'no-store' }),
+      loadAdminReviews(),
     ])
 
     if (portfolioRes.ok) {
@@ -308,7 +344,7 @@ export default function AdminApp() {
       const mPayload = await mediaRes.json()
       setUploadedMedia(mPayload.files || [])
     }
-  }, [])
+  }, [loadAdminReviews])
 
   const checkSession = useCallback(async () => {
     try {
@@ -1054,6 +1090,15 @@ export default function AdminApp() {
                       sub: `${draft.extrasSection.visible !== false ? 'Visible' : 'Hidden'} • ${draft.extras.length} showcase ${draft.extras.length === 1 ? 'item' : 'items'}`,
                     },
                     {
+                      tabId: 'reviews',
+                      title: 'Reviews & Ratings',
+                      summary:
+                        reviewsState.summary?.totalCount > 0
+                          ? `${reviewsState.summary.averageRating.toFixed(1)} ★ average across ${reviewsState.summary.totalCount} published`
+                          : draft.reviewsSection?.heading || 'Words from collaborators.',
+                      sub: `${reviewsState.counts?.pending || 0} pending • ${reviewsState.invites?.filter((i) => i.active).length || 0} active invite links`,
+                    },
+                    {
                       tabId: 'contact',
                       title: 'Contact & Socials',
                       summary: draft.contact.heading,
@@ -1496,9 +1541,11 @@ export default function AdminApp() {
                   </div>
 
                   <div className="admin-item-card">
-                    <strong>Page Title & SEO</strong>
+                    <strong>Search Engine Optimization (SEO &amp; Knowledge Graph)</strong>
                     <div className="admin-field">
-                      <label className="admin-field-label">Browser Tab Title</label>
+                      <label className="admin-field-label">
+                        Browser Tab Title ({(draft.site.seo.title || '').length} chars)
+                      </label>
                       <input
                         className="admin-input"
                         value={draft.site.seo.title}
@@ -1514,7 +1561,9 @@ export default function AdminApp() {
                       />
                     </div>
                     <div className="admin-field">
-                      <label className="admin-field-label">Meta Description</label>
+                      <label className="admin-field-label">
+                        Meta Description ({(draft.site.seo.description || '').length} chars — aim for 140–160)
+                      </label>
                       <textarea
                         className="admin-textarea"
                         value={draft.site.seo.description}
@@ -1528,6 +1577,232 @@ export default function AdminApp() {
                           }))
                         }
                       />
+                    </div>
+
+                    <div className="admin-grid-2">
+                      <div className="admin-field">
+                        <label className="admin-field-label">
+                          Primary Role / Job Title (Schema.org)
+                        </label>
+                        <input
+                          className="admin-input"
+                          value={draft.site.seo.jobTitle || ''}
+                          onChange={(e) =>
+                            setDraft((d) => ({
+                              ...d,
+                              site: {
+                                ...d.site,
+                                seo: { ...d.site.seo, jobTitle: e.target.value },
+                              },
+                            }))
+                          }
+                          placeholder="Software Engineer & Founder of chomkaTECH™"
+                        />
+                      </div>
+
+                      <div className="admin-field">
+                        <label className="admin-field-label">
+                          Organization / Brand Name
+                        </label>
+                        <input
+                          className="admin-input"
+                          value={draft.site.seo.organizationName || ''}
+                          onChange={(e) =>
+                            setDraft((d) => ({
+                              ...d,
+                              site: {
+                                ...d.site,
+                                seo: {
+                                  ...d.site.seo,
+                                  organizationName: e.target.value,
+                                },
+                              },
+                            }))
+                          }
+                          placeholder="chomkaTECH™"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="admin-grid-2">
+                      <div className="admin-field">
+                        <label className="admin-field-label">
+                          Canonical URL (Leave blank for auto-detected origin)
+                        </label>
+                        <input
+                          className="admin-input"
+                          value={draft.site.seo.canonicalUrl || ''}
+                          onChange={(e) =>
+                            setDraft((d) => ({
+                              ...d,
+                              site: {
+                                ...d.site,
+                                seo: {
+                                  ...d.site.seo,
+                                  canonicalUrl: e.target.value,
+                                },
+                              },
+                            }))
+                          }
+                          placeholder="https://sji.sjip.workers.dev/"
+                        />
+                      </div>
+
+                      <div className="admin-field">
+                        <label className="admin-field-label">
+                          Location (Optional, Schema.org Place)
+                        </label>
+                        <input
+                          className="admin-input"
+                          value={draft.site.seo.location || ''}
+                          onChange={(e) =>
+                            setDraft((d) => ({
+                              ...d,
+                              site: {
+                                ...d.site,
+                                seo: { ...d.site.seo, location: e.target.value },
+                              },
+                            }))
+                          }
+                          placeholder="e.g. Nigeria"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="admin-field">
+                      <label className="admin-field-label">
+                        Extra Search Keywords (Auto-merged with Projects, Skills, Credentials &amp; Extras)
+                      </label>
+                      <textarea
+                        className="admin-textarea"
+                        value={draft.site.seo.keywords || ''}
+                        onChange={(e) =>
+                          setDraft((d) => ({
+                            ...d,
+                            site: {
+                              ...d.site,
+                              seo: { ...d.site.seo, keywords: e.target.value },
+                            },
+                          }))
+                        }
+                        placeholder="Samuel John-Ibro, Samuel Silachomka John-Ibro, chomkaTECH, ..."
+                      />
+                    </div>
+
+                    <TagChipsEditor
+                      label="Name Aliases &amp; Alternate Handles (Schema.org alternateName)"
+                      tags={draft.site.seo.aliases || []}
+                      onChange={(aliases) =>
+                        setDraft((d) => ({
+                          ...d,
+                          site: {
+                            ...d.site,
+                            seo: { ...d.site.seo, aliases },
+                          },
+                        }))
+                      }
+                      placeholder="Add alternate name or handle..."
+                    />
+
+                    <MediaField
+                      label="Social Share Card / Open Graph Image (1200×630 recommended)"
+                      value={draft.site.seo.ogImage || ''}
+                      allowClear
+                      onChange={(ogImage) =>
+                        setDraft((d) => ({
+                          ...d,
+                          site: {
+                            ...d.site,
+                            seo: { ...d.site.seo, ogImage },
+                          },
+                        }))
+                      }
+                      uploadedMedia={uploadedMedia}
+                      onMediaUploaded={(file) =>
+                        setUploadedMedia((prev) => [file, ...prev])
+                      }
+                      onNotify={notify}
+                    />
+
+                    <div className="admin-grid-2">
+                      <div className="admin-field">
+                        <label className="admin-field-label">
+                          Google Search Console Verification Token
+                        </label>
+                        <input
+                          className="admin-input"
+                          value={draft.site.seo.googleSiteVerification || ''}
+                          onChange={(e) =>
+                            setDraft((d) => ({
+                              ...d,
+                              site: {
+                                ...d.site,
+                                seo: {
+                                  ...d.site.seo,
+                                  googleSiteVerification: e.target.value,
+                                },
+                              },
+                            }))
+                          }
+                          placeholder="Paste content token from Google Search Console HTML tag"
+                        />
+                      </div>
+
+                      <div className="admin-field">
+                        <label className="admin-field-label">
+                          Bing Webmaster Verification Token (Optional)
+                        </label>
+                        <input
+                          className="admin-input"
+                          value={draft.site.seo.bingSiteVerification || ''}
+                          onChange={(e) =>
+                            setDraft((d) => ({
+                              ...d,
+                              site: {
+                                ...d.site,
+                                seo: {
+                                  ...d.site.seo,
+                                  bingSiteVerification: e.target.value,
+                                },
+                              },
+                            }))
+                          }
+                          placeholder="Paste msvalidate.01 token"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="admin-preview-box">
+                      <div className="admin-preview-box-label">
+                        Live Google Search Preview &amp; Auto-Indexed Entities
+                      </div>
+                      <div
+                        style={{
+                          marginTop: '10px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '4px',
+                        }}
+                      >
+                        <span style={{ fontSize: '0.78rem', color: '#9a9a9a' }}>
+                          {resolveCanonicalOrigin(
+                            draft,
+                            typeof window !== 'undefined' ? window.location.href : ''
+                          )}
+                          /
+                        </span>
+                        <strong style={{ fontSize: '1.05rem', color: '#8ab4f8' }}>
+                          {draft.site.seo.title || DEFAULT_PORTFOLIO.site.seo.title}
+                        </strong>
+                        <p style={{ fontSize: '0.84rem', color: '#bdc1c6', lineHeight: 1.5 }}>
+                          {draft.site.seo.description ||
+                            DEFAULT_PORTFOLIO.site.seo.description}
+                        </p>
+                        <span style={{ fontSize: '0.75rem', color: '#c89b3c', marginTop: '4px' }}>
+                          Auto-indexed keywords ({collectDynamicKeywords(draft).length}):{' '}
+                          {collectDynamicKeywords(draft).slice(0, 12).join(', ')}...
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3477,6 +3752,16 @@ export default function AdminApp() {
                   ))}
                 </div>
               </section>
+            )}
+
+            {activeTab === 'reviews' && (
+              <ReviewsAdminPanel
+                draft={draft}
+                setDraft={setDraft}
+                reviewsState={reviewsState}
+                onReloadReviews={loadAdminReviews}
+                notify={notify}
+              />
             )}
 
             {activeTab === 'contact' && (

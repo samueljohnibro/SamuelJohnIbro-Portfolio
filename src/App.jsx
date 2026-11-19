@@ -9,12 +9,19 @@ function normalizeClientPath(pathname) {
   return pathname.replace(/\/+$/, '') || '/'
 }
 
-function App() {
-  const [pathname] = useState(() =>
-    typeof window !== 'undefined'
+function App({
+  initialData,
+  initialPathname = null,
+  initialYear = null,
+  initialReviews = null,
+  initialReviewsSummary = null,
+}) {
+  const [pathname] = useState(() => {
+    if (initialPathname) return normalizeClientPath(initialPathname)
+    return typeof window !== 'undefined'
       ? normalizeClientPath(window.location.pathname)
       : '/'
-  )
+  })
   const [routeMode, setRouteMode] = useState(() =>
     pathname === '/' ? 'portfolio' : 'checking'
   )
@@ -84,7 +91,14 @@ function App() {
     )
   }
 
-  return <PortfolioPage />
+  return (
+    <PortfolioPage
+      initialData={initialData}
+      initialYear={initialYear}
+      initialReviews={initialReviews}
+      initialReviewsSummary={initialReviewsSummary}
+    />
+  )
 }
 
 export default App

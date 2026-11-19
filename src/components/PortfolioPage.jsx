@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import {
   DEFAULT_PORTFOLIO,
@@ -12,16 +13,26 @@ import {
   resolveHeadlineParts,
   sortProjectsByStatusAndTimeline,
 } from '../data/defaultPortfolio.js'
+import { computeReviewsSummary } from '../data/reviewsMeta.js'
 import { useMasonryGrid } from '../hooks/useMasonryGrid.js'
+import {
+  buildJsonLdGraph,
+  resolveCanonicalOrigin,
+  resolveSeoMetadata,
+} from '../seo/portfolioSeo.js'
 import { CredentialModal } from './CredentialModal.jsx'
 import { CredentialsGrid } from './CredentialsGrid.jsx'
 import { ProjectPreviewModal, ProjectSitePreview } from './ProjectPreview.jsx'
 import { ProjectsGrid } from './ProjectsGrid.jsx'
+import { ReviewModal } from './ReviewModal.jsx'
+import { ReviewsSection } from './ReviewsSection.jsx'
 import { SpaceBackground } from './SpaceBackground.jsx'
 import { TrainingCarousel } from './TrainingCarousel.jsx'
 
 const TYPEWRITER_SPEED = 55
 const TYPEWRITER_RESTART_DELAY = 7000
+const TYPEWRITER_INITIAL_DELAY = 3200
+const emptySubscribe = () => () => {}
 const PORTFOLIO_FONT =
   'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
 
@@ -192,20 +203,64 @@ function renderRichText(text) {
   })
 }
 
-export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
+export function PortfolioPage({
+  initialData = DEFAULT_PORTFOLIO,
+  initialYear = null,
+  initialReviews = null,
+  initialReviewsSummary = null,
+}) {
   const [portfolio, setPortfolio] = useState(() =>
     normalizePortfolioData(initialData)
   )
   const [isNavOpen, setIsNavOpen] = useState(false)
   const [expandedProject, setExpandedProject] = useState(null)
   const [expandedCredential, setExpandedCredential] = useState(null)
+  const [reviews, setReviews] = useState(() =>
+    Array.isArray(initialReviews) ? initialReviews : []
+  )
+  const [reviewsSummary, setReviewsSummary] = useState(() =>
+    initialReviewsSummary ||
+    computeReviewsSummary(Array.isArray(initialReviews) ? initialReviews : [])
+  )
+  const [reviewsLoading, setReviewsLoading] = useState(
+    () => !Array.isArray(initialReviews)
+  )
+  const [reviewsSettings, setReviewsSettings] = useState({
+    moderationMode: 'auto',
+    publicSubmissionsEnabled: true,
+  })
+  const [reviewChallengeToken, setReviewChallengeToken] = useState('')
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState(null)
+  const [reviewFilter, setReviewFilter] = useState('all')
+  const [inviteCode, setInviteCode] = useState('')
+  const [inviteInfo, setInviteInfo] = useState(null)
+  const [reviewModalState, setReviewModalState] = useState({
+    open: false,
+    target: 'overall',
+    sessionKey: 0,
+  })
+  const isClientReady = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  )
 
   const heroText = portfolio.hero.headline || DEFAULT_PORTFOLIO.hero.headline
+  const prefersReducedMotion =
+    isClientReady &&
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const staticHeroMode =
+    !isClientReady ||
     typeof window === 'undefined' ||
     !('IntersectionObserver' in window) ||
-    isCompactViewport()
-  const [typedHeroText, setTypedHeroText] = useState('')
+    isCompactViewport() ||
+    prefersReducedMotion
+  const [typedState, setTypedState] = useState(() => ({
+    text: heroText,
+    count: heroText.length,
+  }))
   const [heroLineLayout, setHeroLineLayout] = useState(null)
 
   const typewriterTimerRef = useRef(null)
@@ -230,11 +285,88 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           setPortfolio(normalizePortfolioData(payload.data))
         }
       } catch {
-        // Gracefully retain bundled default portfolio when API is unreachable
+        // Gracefully retain bundled/bootstrapped portfolio when API is unreachable
+      }
+    }
+
+    const loadLiveReviews = async () => {
+      try {
+        const res = await fetch('/api/reviews', {
+          cache: 'no-store',
+          headers: { Accept: 'application/json' },
+        })
+        if (!res.ok) return
+        const payload = await res.json()
+        if (!active) return
+        const nextReviews = Array.isArray(payload?.reviews) ? payload.reviews : []
+        setReviews(nextReviews)
+        setReviewsSummary(
+          payload?.summary || computeReviewsSummary(nextReviews)
+        )
+        if (payload?.settings) {
+          setReviewsSettings({
+            moderationMode:
+              payload.settings.moderationMode === 'manual' ? 'manual' : 'auto',
+            publicSubmissionsEnabled:
+              payload.settings.publicSubmissionsEnabled !== false,
+          })
+        }
+        if (payload?.challengeToken) {
+          setReviewChallengeToken(payload.challengeToken)
+        }
+        setTurnstileSiteKey(payload?.turnstileSiteKey || null)
+      } catch {
+        // Gracefully retain empty reviews list when API is unreachable
+      } finally {
+        if (active) setReviewsLoading(false)
       }
     }
 
     loadLivePortfolio()
+    loadLiveReviews()
+
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const urlInvite = (params.get('invite') || '').trim()
+      const urlTarget = (params.get('reviewTarget') || '').trim()
+
+      if (urlInvite) {
+        fetch(`/api/reviews/invite?code=${encodeURIComponent(urlInvite)}`, {
+          cache: 'no-store',
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((info) => {
+            if (!active) return
+            setInviteCode(urlInvite)
+            if (info) setInviteInfo(info)
+            const target =
+              urlTarget ||
+              (info?.valid && info.targetType === 'project' && info.targetId
+                ? info.targetId
+                : 'overall')
+            setReviewModalState({
+              open: true,
+              target,
+              sessionKey: Date.now(),
+            })
+            requestAnimationFrame(() => {
+              document
+                .getElementById('reviews')
+                ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            })
+          })
+          .catch(() => {})
+      } else if (urlTarget) {
+        Promise.resolve().then(() => {
+          if (!active) return
+          setReviewModalState({
+            open: true,
+            target: urlTarget,
+            sessionKey: 1,
+          })
+        })
+      }
+    }
 
     let channel = null
     if (typeof BroadcastChannel !== 'undefined') {
@@ -242,8 +374,11 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
       channel.onmessage = (event) => {
         if (event?.data?.type === 'portfolio-updated' && event.data.data) {
           setPortfolio(normalizePortfolioData(event.data.data))
+        } else if (event?.data?.type === 'reviews-updated') {
+          loadLiveReviews()
         } else {
           loadLivePortfolio()
+          loadLiveReviews()
         }
       }
     }
@@ -254,19 +389,48 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     }
   }, [])
 
-  // Sync document SEO metadata dynamically
+  // Sync document SEO metadata & JSON-LD structured data dynamically
   useEffect(() => {
     if (typeof document === 'undefined') return
-    if (portfolio.site?.seo?.title) {
-      document.title = portfolio.site.seo.title
+    const origin = resolveCanonicalOrigin(
+      portfolio,
+      typeof window !== 'undefined' ? window.location.href : ''
+    )
+    const seoMeta = resolveSeoMetadata(portfolio, origin)
+
+    document.title = seoMeta.title
+
+    const setMeta = (selector, content) => {
+      if (!content) return
+      const el = document.querySelector(selector)
+      if (el) el.setAttribute('content', content)
     }
-    if (portfolio.site?.seo?.description) {
-      const meta = document.querySelector('meta[name="description"]')
-      if (meta) {
-        meta.setAttribute('content', portfolio.site.seo.description)
-      }
+
+    setMeta('meta[name="description"]', seoMeta.description)
+    setMeta('meta[name="keywords"]', seoMeta.keywordsContent)
+    setMeta('meta[name="author"]', seoMeta.author)
+    setMeta('meta[property="og:title"]', seoMeta.title)
+    setMeta('meta[property="og:description"]', seoMeta.description)
+    setMeta('meta[property="og:site_name"]', seoMeta.siteName)
+    setMeta('meta[property="og:image"]', seoMeta.ogImageUrl)
+    setMeta('meta[property="og:image:secure_url"]', seoMeta.ogImageUrl)
+    setMeta('meta[property="og:image:alt"]', seoMeta.ogImageAlt)
+    setMeta('meta[name="twitter:title"]', seoMeta.title)
+    setMeta('meta[name="twitter:description"]', seoMeta.description)
+    setMeta('meta[name="twitter:image"]', seoMeta.ogImageUrl)
+    setMeta('meta[name="twitter:image:alt"]', seoMeta.ogImageAlt)
+
+    let ldScript = document.getElementById('sji-structured-data')
+    if (!ldScript) {
+      ldScript = document.createElement('script')
+      ldScript.id = 'sji-structured-data'
+      ldScript.type = 'application/ld+json'
+      document.head.appendChild(ldScript)
     }
-  }, [portfolio.site?.seo?.title, portfolio.site?.seo?.description])
+    ldScript.textContent = JSON.stringify(
+      buildJsonLdGraph(portfolio, origin, null, null, reviews)
+    )
+  }, [portfolio, reviews])
 
   const clearTypewriterTimer = () => {
     if (typewriterTimerRef.current) {
@@ -307,10 +471,65 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     }
   }, [])
 
+  const handleOpenWriteReview = useCallback(
+    (target = 'overall', triggerElement = null) => {
+      previewReturnFocusRef.current = triggerElement || null
+      setReviewModalState((prev) => ({
+        open: true,
+        target: target || 'overall',
+        sessionKey: prev.sessionKey + 1,
+      }))
+    },
+    []
+  )
+
+  const handleCloseReviewModal = useCallback(() => {
+    setReviewModalState((prev) => ({ ...prev, open: false }))
+    const triggerEl = previewReturnFocusRef.current
+    previewReturnFocusRef.current = null
+    if (triggerEl && typeof triggerEl.focus === 'function') {
+      requestAnimationFrame(() => {
+        triggerEl.focus()
+      })
+    }
+  }, [])
+
+  const handleViewProjectReviews = useCallback((projectId) => {
+    setReviewFilter(projectId || 'all')
+    if (typeof document !== 'undefined') {
+      document
+        .getElementById('reviews')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [])
+
+  const handleReviewSubmitted = useCallback((payload) => {
+    if (Array.isArray(payload?.reviews)) {
+      setReviews(payload.reviews)
+      setReviewsSummary(
+        payload.summary || computeReviewsSummary(payload.reviews)
+      )
+    } else if (payload?.status === 'approved' && payload?.review) {
+      setReviews((prev) => {
+        const next = [payload.review, ...prev]
+        setReviewsSummary(computeReviewsSummary(next))
+        return next
+      })
+    }
+    if (payload?.status === 'approved' && payload?.review) {
+      setReviewFilter('all')
+    }
+    if (typeof BroadcastChannel !== 'undefined') {
+      const ch = new BroadcastChannel('sji-portfolio-updates')
+      ch.postMessage({ type: 'reviews-updated' })
+      ch.close()
+    }
+  }, [])
+
   const handleCardPointerMove = useCallback((event) => {
     if (event.pointerType === 'touch') return
     const card = event.target.closest(
-      '.project-card, .credential-card, .extra-card, .skills-grid > div, .training-details > article'
+      '.project-card, .credential-card, .extra-card, .review-card, .reviews-overview-card, .skills-grid > div, .training-details > article'
     )
     if (!card) return
     const rect = card.getBoundingClientRect()
@@ -321,7 +540,12 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
   }, [])
 
   useEffect(() => {
-    if (isNavOpen || expandedProject || expandedCredential) {
+    if (
+      isNavOpen ||
+      expandedProject ||
+      expandedCredential ||
+      reviewModalState.open
+    ) {
       document.body.style.overflow = 'hidden'
     } else {
       document.body.style.overflow = ''
@@ -329,7 +553,9 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
-        if (expandedCredential) {
+        if (reviewModalState.open) {
+          handleCloseReviewModal()
+        } else if (expandedCredential) {
           handleCloseCredential()
         } else if (expandedProject) {
           handleClosePreview()
@@ -357,8 +583,10 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     isNavOpen,
     expandedProject,
     expandedCredential,
+    reviewModalState.open,
     handleClosePreview,
     handleCloseCredential,
+    handleCloseReviewModal,
   ])
 
   useEffect(() => {
@@ -369,19 +597,20 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
 
     let isDisposed = false
     let isHeroVisible = false
+    let hasShownInitial = false
 
     const startTypingCycle = () => {
       if (isDisposed || !isHeroVisible) return
 
       clearTypewriterTimer()
-      setTypedHeroText('')
+      setTypedState({ text: heroText, count: 0 })
 
       let currentIndex = 0
       const typeNextCharacter = () => {
         if (isDisposed || !isHeroVisible) return
 
         currentIndex += 1
-        setTypedHeroText(heroText.slice(0, currentIndex))
+        setTypedState({ text: heroText, count: currentIndex })
 
         if (currentIndex < heroText.length) {
           typewriterTimerRef.current = window.setTimeout(
@@ -410,11 +639,21 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
         if (entry.isIntersecting) {
           if (isHeroVisible) return
           isHeroVisible = true
-          startTypingCycle()
+          if (!hasShownInitial) {
+            hasShownInitial = true
+            clearTypewriterTimer()
+            typewriterTimerRef.current = window.setTimeout(
+              startTypingCycle,
+              TYPEWRITER_INITIAL_DELAY
+            )
+          } else {
+            startTypingCycle()
+          }
         } else {
           isHeroVisible = false
+          hasShownInitial = true
           clearTypewriterTimer()
-          setTypedHeroText('')
+          setTypedState({ text: heroText, count: 0 })
         }
       },
       { threshold: 0.35 }
@@ -474,7 +713,11 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     }
   }, [heroText, portfolio.hero.accentPhrase, staticHeroMode])
 
-  const activeHeroText = staticHeroMode ? heroText : typedHeroText
+  const activeHeroText = staticHeroMode
+    ? heroText
+    : typedState.text === heroText
+      ? heroText.slice(0, typedState.count)
+      : heroText
   const typedLen = activeHeroText.length
   const beforeEnd = headlineSplit.before.length
   const accentEnd = beforeEnd + headlineSplit.accent.length
@@ -584,19 +827,26 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
     [portfolio.contact?.actions]
   )
 
-  const currentYear = String(new Date().getFullYear())
+  const currentYear = String(initialYear || new Date().getUTCFullYear())
   const footerLeftText = (
     portfolio.site?.footerLeft || '© {year} Samuel Silachomka John-Ibro'
   ).replace(/\{year\}/g, currentYear)
   const footerRightText =
     portfolio.site?.footerRight || 'Built by chomkaTECH™'
+  const brandName = portfolio.site?.brandName || 'Samuel John-Ibro'
+  const organizationName =
+    portfolio.site?.seo?.organizationName || 'chomkaTECH™'
 
   return (
-    <main
+    <div
       className="portfolio-app"
       onPointerMove={handleCardPointerMove}
       style={{ fontFamily: PORTFOLIO_FONT }}
     >
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
       <SpaceBackground />
 
       <style>
@@ -866,7 +1116,7 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
             display: flex;
             align-items: center;
             justify-content: flex-end;
-            gap: clamp(14px, 2vw, 28px);
+            gap: clamp(12px, 1.7vw, 24px);
           }
 
           .portfolio-app .nav-links a {
@@ -1121,7 +1371,7 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           onClick={() => setIsNavOpen(false)}
         >
           <span className="brand-orbit-icon" aria-hidden="true" />
-          <span>{portfolio.site?.brandName || 'Samuel John-Ibro'}</span>
+          <span>{brandName}</span>
         </a>
 
         <button
@@ -1136,7 +1386,10 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           <span className="nav-toggle-bar" />
         </button>
 
-        <nav className={`nav-links ${isNavOpen ? 'nav-links-open' : ''}`}>
+        <nav
+          aria-label="Primary navigation"
+          className={`nav-links ${isNavOpen ? 'nav-links-open' : ''}`}
+        >
           {visibleNavLinks.map((link) => (
             <a
               key={link.id}
@@ -1149,13 +1402,30 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
         </nav>
       </header>
 
-      <section id="home" className="hero-section" ref={heroSectionRef}>
+      <main id="main-content">
+      <section
+        id="home"
+        className="hero-section"
+        ref={heroSectionRef}
+        aria-label="Introduction"
+      >
         {portfolio.hero?.eyebrow && (
           <p className="eyebrow">{portfolio.hero.eyebrow}</p>
         )}
 
+        <p className="hero-identity">
+          <span>{brandName}</span>
+          {organizationName && (
+            <>
+              <span className="hero-identity-sep" aria-hidden="true">
+                •
+              </span>
+              <span className="hero-identity-org">{organizationName}</span>
+            </>
+          )}
+        </p>
+
         <h1
-          aria-label={heroText}
           className={heroHeadingHeight !== null ? 'hero-headline-animated' : undefined}
           style={
             heroHeadingHeight !== null
@@ -1163,6 +1433,8 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
               : undefined
           }
         >
+          <span className="sr-only">{heroText}</span>
+
           {!staticHeroMode && (
             <span
               className="hero-measure"
@@ -1215,7 +1487,11 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
             <a
               href={portfolio.hero.primaryCta.href || '#projects'}
               target={portfolio.hero.primaryCta.newTab ? '_blank' : undefined}
-              rel={portfolio.hero.primaryCta.newTab ? 'noreferrer' : undefined}
+              rel={
+                portfolio.hero.primaryCta.newTab
+                  ? 'noopener noreferrer'
+                  : undefined
+              }
               className="primary-button"
             >
               {portfolio.hero.primaryCta.label}
@@ -1226,7 +1502,11 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
             <a
               href={portfolio.hero.secondaryCta.href || '#contact'}
               target={portfolio.hero.secondaryCta.newTab ? '_blank' : undefined}
-              rel={portfolio.hero.secondaryCta.newTab ? 'noreferrer' : undefined}
+              rel={
+                portfolio.hero.secondaryCta.newTab
+                  ? 'noopener noreferrer'
+                  : undefined
+              }
               className="secondary-button"
             >
               {portfolio.hero.secondaryCta.label}
@@ -1236,12 +1516,16 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
       </section>
 
       {portfolio.about?.visible !== false && (
-        <section id="about" className="section about-section">
+        <section
+          id="about"
+          className="section about-section"
+          aria-labelledby="about-heading"
+        >
           <p className="section-label">{portfolio.about.label}</p>
 
           <div className="about-content">
             <div className="about-text">
-              <h2>{portfolio.about.heading}</h2>
+              <h2 id="about-heading">{portfolio.about.heading}</h2>
 
               {(portfolio.about.paragraphs || []).map((paragraph, idx) => (
                 <p key={idx}>{renderRichText(paragraph)}</p>
@@ -1250,10 +1534,32 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
 
             {portfolio.about.image?.src && (
               <div className="about-image">
-                <img
-                  src={portfolio.about.image.src}
-                  alt={portfolio.about.image.alt || 'Profile portrait'}
-                />
+                {portfolio.about.image.src === '/assets/samuel-profile.png' ? (
+                  <picture>
+                    <source
+                      srcSet="/assets/samuel-profile.webp"
+                      type="image/webp"
+                    />
+                    <img
+                      src={portfolio.about.image.src}
+                      alt={
+                        portfolio.about.image.alt ||
+                        `${brandName} — Software Engineer & Founder of chomkaTECH™`
+                      }
+                      width={720}
+                      height={779}
+                      decoding="async"
+                      fetchPriority="high"
+                    />
+                  </picture>
+                ) : (
+                  <img
+                    src={portfolio.about.image.src}
+                    alt={portfolio.about.image.alt || 'Profile portrait'}
+                    decoding="async"
+                    fetchPriority="high"
+                  />
+                )}
               </div>
             )}
           </div>
@@ -1261,22 +1567,37 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
       )}
 
       {portfolio.projectsSection?.visible !== false && (
-        <section id="projects" className="section">
+        <section
+          id="projects"
+          className="section"
+          aria-labelledby="projects-heading"
+        >
           <p className="section-label">{portfolio.projectsSection.label}</p>
-          <h2>{portfolio.projectsSection.heading}</h2>
+          <h2 id="projects-heading">{portfolio.projectsSection.heading}</h2>
 
           <ProjectsGrid
             projects={sortedProjects}
             isPreviewModalOpen={Boolean(expandedProject)}
             onOpenPreview={handleOpenPreview}
+            showReviewsIntegration={
+              portfolio.reviewsSection?.visible !== false &&
+              portfolio.reviewsSection?.showProjectBadges !== false
+            }
+            reviewsByTarget={reviewsSummary?.byTarget}
+            onViewProjectReviews={handleViewProjectReviews}
+            onReviewProject={handleOpenWriteReview}
           />
         </section>
       )}
 
       {portfolio.skillsSection?.visible !== false && (
-        <section id="skills" className="section">
+        <section
+          id="skills"
+          className="section"
+          aria-labelledby="skills-heading"
+        >
           <p className="section-label">{portfolio.skillsSection.label}</p>
-          <h2>{portfolio.skillsSection.heading}</h2>
+          <h2 id="skills-heading">{portfolio.skillsSection.heading}</h2>
 
           <div ref={skillsGridRef} className="skills-grid">
             {visibleSkills.map((group) => (
@@ -1290,12 +1611,16 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
       )}
 
       {portfolio.training?.visible !== false && (
-        <section id="training" className="section training-section">
+        <section
+          id="training"
+          className="section training-section"
+          aria-labelledby="training-heading"
+        >
           <p className="section-label">{portfolio.training.label}</p>
 
           <div className="training-heading">
             <div>
-              <h2>{portfolio.training.heading}</h2>
+              <h2 id="training-heading">{portfolio.training.heading}</h2>
               <p>{renderRichText(portfolio.training.description)}</p>
             </div>
 
@@ -1329,9 +1654,15 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
       )}
 
       {portfolio.credentialsSection?.visible !== false && (
-        <section id="credentials" className="section credentials-section">
+        <section
+          id="credentials"
+          className="section credentials-section"
+          aria-labelledby="credentials-heading"
+        >
           <p className="section-label">{portfolio.credentialsSection.label}</p>
-          <h2>{portfolio.credentialsSection.heading}</h2>
+          <h2 id="credentials-heading">
+            {portfolio.credentialsSection.heading}
+          </h2>
 
           <CredentialsGrid
             credentials={visibleCredentials}
@@ -1347,9 +1678,13 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
       )}
 
       {portfolio.extrasSection?.visible !== false && (
-        <section id="extras" className="section extras-section">
+        <section
+          id="extras"
+          className="section extras-section"
+          aria-labelledby="extras-heading"
+        >
           <p className="section-label">{portfolio.extrasSection.label}</p>
-          <h2>{portfolio.extrasSection.heading}</h2>
+          <h2 id="extras-heading">{portfolio.extrasSection.heading}</h2>
 
           {portfolio.extrasSection.intro && (
             <p>{renderRichText(portfolio.extrasSection.intro)}</p>
@@ -1382,6 +1717,10 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
                       <img
                         src={extra.logo.src}
                         alt={extra.logo.alt || `${extra.title} logo`}
+                        width={52}
+                        height={52}
+                        loading="lazy"
+                        decoding="async"
                       />
                     </div>
                   )}
@@ -1426,7 +1765,7 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
                     <a
                       href={ctaUrl}
                       target="_blank"
-                      rel="noreferrer"
+                      rel="me noopener noreferrer"
                       className="extra-live-link"
                       aria-label={
                         extra.ctaAriaLabel || `Open ${extra.title} in a new tab`
@@ -1445,31 +1784,53 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
         </section>
       )}
 
+      {portfolio.reviewsSection?.visible !== false && (
+        <ReviewsSection
+          sectionConfig={portfolio.reviewsSection}
+          projects={sortedProjects}
+          reviews={reviews}
+          summary={reviewsSummary}
+          activeFilter={reviewFilter}
+          onChangeFilter={setReviewFilter}
+          onOpenWriteReview={handleOpenWriteReview}
+          loading={reviewsLoading}
+        />
+      )}
+
       {portfolio.contact?.visible !== false && (
-        <section id="contact" className="section contact-section">
+        <section
+          id="contact"
+          className="section contact-section"
+          aria-labelledby="contact-heading"
+        >
           <p className="section-label">{portfolio.contact.label}</p>
-          <h2>{portfolio.contact.heading}</h2>
+          <h2 id="contact-heading">{portfolio.contact.heading}</h2>
           <p>{renderRichText(portfolio.contact.description)}</p>
 
           <div className="contact-actions">
-            {visibleContactActions.map((action) => (
-              <a
-                key={action.id}
-                href={action.href}
-                target={action.newTab !== false ? '_blank' : undefined}
-                rel={action.newTab !== false ? 'noreferrer' : undefined}
-                className={
-                  action.variant === 'primary'
-                    ? 'primary-button'
-                    : 'secondary-button'
-                }
-              >
-                {action.label}
-              </a>
-            ))}
+            {visibleContactActions.map((action) => {
+              const isMailOrTel = /^(mailto|tel):/i.test(action.href || '')
+              const openNewTab = action.newTab !== false && !isMailOrTel
+              return (
+                <a
+                  key={action.id}
+                  href={action.href}
+                  target={openNewTab ? '_blank' : undefined}
+                  rel={openNewTab ? 'me noopener noreferrer' : undefined}
+                  className={
+                    action.variant === 'primary'
+                      ? 'primary-button'
+                      : 'secondary-button'
+                  }
+                >
+                  {action.label}
+                </a>
+              )
+            })}
           </div>
         </section>
       )}
+      </main>
 
       <footer>
         <p>{footerLeftText}</p>
@@ -1491,6 +1852,24 @@ export function PortfolioPage({ initialData = DEFAULT_PORTFOLIO }) {
           onClose={handleCloseCredential}
         />
       )}
-    </main>
+
+      {reviewModalState.open && (
+        <ReviewModal
+          key={reviewModalState.sessionKey}
+          isOpen={reviewModalState.open}
+          onClose={handleCloseReviewModal}
+          projects={sortedProjects}
+          initialTarget={reviewModalState.target}
+          inviteCode={inviteCode}
+          inviteInfo={inviteInfo}
+          challengeToken={reviewChallengeToken}
+          onChallengeRefresh={setReviewChallengeToken}
+          moderationMode={reviewsSettings.moderationMode}
+          publicSubmissionsEnabled={reviewsSettings.publicSubmissionsEnabled}
+          turnstileSiteKey={turnstileSiteKey}
+          onSubmitted={handleReviewSubmitted}
+        />
+      )}
+    </div>
   )
 }
