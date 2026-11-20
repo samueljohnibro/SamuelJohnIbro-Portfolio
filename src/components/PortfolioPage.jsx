@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from 'react'
 import {
   DEFAULT_PORTFOLIO,
@@ -32,7 +31,6 @@ import { TrainingCarousel } from './TrainingCarousel.jsx'
 
 const TYPEWRITER_SPEED = 55
 const TYPEWRITER_RESTART_DELAY = 7000
-const emptySubscribe = () => () => {}
 const PORTFOLIO_FONT =
   'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
 
@@ -233,27 +231,13 @@ export function PortfolioPage({
     lockTarget: false,
     sessionKey: 0,
   })
-  const isClientReady = useSyncExternalStore(
-    emptySubscribe,
-    () => true,
-    () => false
-  )
 
   const heroText = portfolio.hero.headline || DEFAULT_PORTFOLIO.hero.headline
-  const prefersReducedMotion =
-    isClientReady &&
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const staticHeroMode =
-    !isClientReady ||
-    typeof window === 'undefined' ||
-    !('IntersectionObserver' in window) ||
-    prefersReducedMotion
   const [typedCount, setTypedCount] = useState(0)
   const [heroLineLayout, setHeroLineLayout] = useState(null)
 
   const typewriterTimerRef = useRef(null)
+  const restartTypingRef = useRef(null)
   const heroSectionRef = useRef(null)
   const heroMeasureRef = useRef(null)
   const previewReturnFocusRef = useRef(null)
@@ -590,46 +574,44 @@ export function PortfolioPage({
     handleCloseReviewModal,
   ])
 
+  const restartTyping = useCallback(() => {
+    clearTypewriterTimer()
+    setTypedCount(0)
+
+    let currentCount = 0
+    const typeNextCharacter = () => {
+      currentCount += 1
+      setTypedCount(currentCount)
+
+      if (currentCount < heroText.length) {
+        typewriterTimerRef.current = window.setTimeout(
+          typeNextCharacter,
+          TYPEWRITER_SPEED
+        )
+      } else {
+        typewriterTimerRef.current = window.setTimeout(() => {
+          restartTypingRef.current?.()
+        }, TYPEWRITER_RESTART_DELAY)
+      }
+    }
+
+    typewriterTimerRef.current = window.setTimeout(
+      typeNextCharacter,
+      TYPEWRITER_SPEED
+    )
+  }, [heroText])
+
+  useEffect(() => {
+    restartTypingRef.current = restartTyping
+  }, [restartTyping])
+
   useEffect(() => {
     const heroElement = heroSectionRef.current
-    if (!heroElement || staticHeroMode || !heroText) {
+    if (!heroElement || typeof window === 'undefined' || !heroText) {
       return undefined
     }
 
-    let isDisposed = false
     let isHeroVisible = false
-
-    const startTypingCycle = () => {
-      if (isDisposed || !isHeroVisible) return
-
-      clearTypewriterTimer()
-      setTypedCount(0)
-
-      let currentCount = 0
-      const typeNextCharacter = () => {
-        if (isDisposed || !isHeroVisible) return
-
-        currentCount += 1
-        setTypedCount(currentCount)
-
-        if (currentCount < heroText.length) {
-          typewriterTimerRef.current = window.setTimeout(
-            typeNextCharacter,
-            TYPEWRITER_SPEED
-          )
-        } else {
-          typewriterTimerRef.current = window.setTimeout(
-            startTypingCycle,
-            TYPEWRITER_RESTART_DELAY
-          )
-        }
-      }
-
-      typewriterTimerRef.current = window.setTimeout(
-        typeNextCharacter,
-        TYPEWRITER_SPEED
-      )
-    }
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -639,25 +621,24 @@ export function PortfolioPage({
         if (entry.isIntersecting) {
           if (isHeroVisible) return
           isHeroVisible = true
-          startTypingCycle()
+          restartTyping()
         } else {
           isHeroVisible = false
           clearTypewriterTimer()
           setTypedCount(0)
         }
       },
-      { threshold: 0.1 }
+      { threshold: 0.05 }
     )
 
     observer.observe(heroElement)
 
     return () => {
-      isDisposed = true
       isHeroVisible = false
       observer.disconnect()
       clearTypewriterTimer()
     }
-  }, [heroText, staticHeroMode])
+  }, [heroText, restartTyping])
 
   const headlineSplit = useMemo(
     () => resolveHeadlineParts(heroText, portfolio.hero.accentPhrase),
@@ -666,7 +647,7 @@ export function PortfolioPage({
 
   useLayoutEffect(() => {
     const measureEl = heroMeasureRef.current
-    if (staticHeroMode || !measureEl) {
+    if (!measureEl || typeof window === 'undefined') {
       return undefined
     }
 
@@ -701,17 +682,14 @@ export function PortfolioPage({
       active = false
       observer?.disconnect()
     }
-  }, [heroText, portfolio.hero.accentPhrase, staticHeroMode])
+  }, [heroText, portfolio.hero.accentPhrase])
 
-  const activeHeroText = staticHeroMode
-    ? heroText
-    : heroText.slice(0, Math.min(typedCount, heroText.length))
+  const activeHeroText = heroText.slice(0, Math.min(typedCount, heroText.length))
   const typedLen = activeHeroText.length
   const beforeEnd = headlineSplit.before.length
   const accentEnd = beforeEnd + headlineSplit.accent.length
 
   const activeLineLayout =
-    !staticHeroMode &&
     heroLineLayout &&
     heroLineLayout.text === heroText &&
     heroLineLayout.accent === portfolio.hero.accentPhrase
@@ -1356,7 +1334,10 @@ export function PortfolioPage({
         <a
           href="#home"
           className="brand"
-          onClick={() => setIsNavOpen(false)}
+          onClick={() => {
+            setIsNavOpen(false)
+            restartTyping()
+          }}
         >
           <span className="brand-orbit-icon" aria-hidden="true" />
           <span>{brandName}</span>
@@ -1423,15 +1404,13 @@ export function PortfolioPage({
         >
           <span className="sr-only">{heroText}</span>
 
-          {!staticHeroMode && (
-            <span
-              className="hero-measure"
-              aria-hidden="true"
-              ref={heroMeasureRef}
-            >
-              {renderHeadlineParts(headlineSplit)}
-            </span>
-          )}
+          <span
+            className="hero-measure"
+            aria-hidden="true"
+            ref={heroMeasureRef}
+          >
+            {renderHeadlineParts(headlineSplit)}
+          </span>
 
           <span className="hero-typewriter" aria-hidden="true">
             {renderedHeroLines
