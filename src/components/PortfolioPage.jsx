@@ -32,7 +32,6 @@ import { TrainingCarousel } from './TrainingCarousel.jsx'
 
 const TYPEWRITER_SPEED = 55
 const TYPEWRITER_RESTART_DELAY = 7000
-const TYPEWRITER_INITIAL_DELAY = 3200
 const emptySubscribe = () => () => {}
 const PORTFOLIO_FONT =
   'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
@@ -182,14 +181,6 @@ function areHeroLineLayoutsEqual(a, b) {
   return true
 }
 
-function isCompactViewport() {
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(max-width: 900px), (pointer: coarse)').matches
-  )
-}
-
 /** Render **bold** inline segments safely without raw HTML injection. */
 function renderRichText(text) {
   if (typeof text !== 'string' || !text.includes('**')) {
@@ -258,12 +249,8 @@ export function PortfolioPage({
     !isClientReady ||
     typeof window === 'undefined' ||
     !('IntersectionObserver' in window) ||
-    isCompactViewport() ||
     prefersReducedMotion
-  const [typedState, setTypedState] = useState(() => ({
-    text: heroText,
-    count: heroText.length,
-  }))
+  const [typedCount, setTypedCount] = useState(0)
   const [heroLineLayout, setHeroLineLayout] = useState(null)
 
   const typewriterTimerRef = useRef(null)
@@ -611,22 +598,21 @@ export function PortfolioPage({
 
     let isDisposed = false
     let isHeroVisible = false
-    let hasShownInitial = false
 
     const startTypingCycle = () => {
       if (isDisposed || !isHeroVisible) return
 
       clearTypewriterTimer()
-      setTypedState({ text: heroText, count: 0 })
+      setTypedCount(0)
 
-      let currentIndex = 0
+      let currentCount = 0
       const typeNextCharacter = () => {
         if (isDisposed || !isHeroVisible) return
 
-        currentIndex += 1
-        setTypedState({ text: heroText, count: currentIndex })
+        currentCount += 1
+        setTypedCount(currentCount)
 
-        if (currentIndex < heroText.length) {
+        if (currentCount < heroText.length) {
           typewriterTimerRef.current = window.setTimeout(
             typeNextCharacter,
             TYPEWRITER_SPEED
@@ -653,24 +639,14 @@ export function PortfolioPage({
         if (entry.isIntersecting) {
           if (isHeroVisible) return
           isHeroVisible = true
-          if (!hasShownInitial) {
-            hasShownInitial = true
-            clearTypewriterTimer()
-            typewriterTimerRef.current = window.setTimeout(
-              startTypingCycle,
-              TYPEWRITER_INITIAL_DELAY
-            )
-          } else {
-            startTypingCycle()
-          }
+          startTypingCycle()
         } else {
           isHeroVisible = false
-          hasShownInitial = true
           clearTypewriterTimer()
-          setTypedState({ text: heroText, count: 0 })
+          setTypedCount(0)
         }
       },
-      { threshold: 0.35 }
+      { threshold: 0.1 }
     )
 
     observer.observe(heroElement)
@@ -729,9 +705,7 @@ export function PortfolioPage({
 
   const activeHeroText = staticHeroMode
     ? heroText
-    : typedState.text === heroText
-      ? heroText.slice(0, typedState.count)
-      : heroText
+    : heroText.slice(0, Math.min(typedCount, heroText.length))
   const typedLen = activeHeroText.length
   const beforeEnd = headlineSplit.before.length
   const accentEnd = beforeEnd + headlineSplit.accent.length
