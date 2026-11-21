@@ -160,6 +160,26 @@ export function isPlaceholderOrMissingAvatar(url, platform = '') {
     'github.githubassets.com',
     'opengraph.githubassets.com',
     'identicons.github.com',
+    'ibytedtos.com',
+    'tiktok-logo',
+    'tiktok_logo',
+    'poster-square',
+    'static.xx.fbcdn.net',
+    '/rsrc.php/',
+    'fb_icon',
+    'facebook-logo',
+    'telegram.org/img/',
+    's.pinimg.com/images/',
+    'default_open_graph',
+    'user-default-pictures',
+    '1*dmbnkd5d-u45r44go_cf0g',
+    's.ytimg.com',
+    'youtube.com/img/',
+    'yt_1200.png',
+    'redditstatic.com/avatars/defaults',
+    'snoovatar',
+    'threads_logo',
+    'threads-logo',
   ]
 
   if (placeholderMarkers.some((marker) => lower.includes(marker))) {
@@ -180,6 +200,47 @@ export function isPlaceholderOrMissingAvatar(url, platform = '') {
     }
   } else if (platform === 'github') {
     if (!hostLower.endsWith('avatars.githubusercontent.com')) {
+      return true
+    }
+  } else if (platform === 'instagram' || platform === 'threads') {
+    if (
+      (!hostLower.includes('cdninstagram.com') &&
+        !hostLower.includes('fbcdn.net')) ||
+      hostLower.startsWith('static.')
+    ) {
+      return true
+    }
+  } else if (platform === 'facebook') {
+    if (
+      !hostLower.includes('fbcdn.net') ||
+      hostLower.startsWith('static.')
+    ) {
+      return true
+    }
+  } else if (platform === 'tiktok') {
+    if (!hostLower.includes('tiktokcdn')) {
+      return true
+    }
+  } else if (platform === 'telegram') {
+    if (
+      !hostLower.includes('telesco.pe') &&
+      !hostLower.includes('cdn-telegram.org')
+    ) {
+      return true
+    }
+  } else if (platform === 'youtube') {
+    if (
+      !hostLower.endsWith('yt3.googleusercontent.com') &&
+      !hostLower.endsWith('yt3.ggpht.com')
+    ) {
+      return true
+    }
+  } else if (platform === 'twitch') {
+    if (!hostLower.endsWith('jtvnw.net')) {
+      return true
+    }
+  } else if (platform === 'bluesky') {
+    if (!hostLower.endsWith('cdn.bsky.app')) {
       return true
     }
   }
@@ -327,11 +388,79 @@ export function classifyProfileUrl(rawUrl, customLabel = '') {
     label = 'YouTube'
     handle = firstSeg ? firstSeg : cleanHost
   } else if (
+    cleanHost === 'facebook.com' ||
+    cleanHost === 'm.facebook.com' ||
+    cleanHost === 'fb.com'
+  ) {
+    platform = 'facebook'
+    label = 'Facebook'
+    handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
+  } else if (cleanHost === 'tiktok.com' || cleanHost.endsWith('.tiktok.com')) {
+    platform = 'tiktok'
+    label = 'TikTok'
+    handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
+  } else if (cleanHost === 'threads.net' || cleanHost === 'threads.com') {
+    platform = 'threads'
+    label = 'Threads'
+    handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
+  } else if (cleanHost === 'bsky.app') {
+    platform = 'bluesky'
+    label = 'Bluesky'
+    handle =
+      firstSeg === 'profile' && secondSeg
+        ? `@${secondSeg.replace(/^@/, '')}`
+        : firstSeg
+          ? `@${firstSeg.replace(/^@/, '')}`
+          : cleanHost
+  } else if (cleanHost === 't.me' || cleanHost === 'telegram.me') {
+    platform = 'telegram'
+    label = 'Telegram'
+    handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
+  } else if (cleanHost === 'medium.com' || cleanHost.endsWith('.medium.com')) {
+    platform = 'medium'
+    label = 'Medium'
+    handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
+  } else if (cleanHost === 'twitch.tv' || cleanHost.endsWith('.twitch.tv')) {
+    platform = 'twitch'
+    label = 'Twitch'
+    handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
+  } else if (cleanHost === 'reddit.com' || cleanHost.endsWith('.reddit.com')) {
+    platform = 'reddit'
+    label = 'Reddit'
+    handle =
+      (firstSeg === 'u' || firstSeg === 'user') && secondSeg
+        ? `u/${secondSeg}`
+        : firstSeg || cleanHost
+  } else if (cleanHost === 'gitlab.com') {
+    platform = 'gitlab'
+    label = 'GitLab'
+    handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
+  } else if (cleanHost === 'dev.to') {
+    platform = 'devto'
+    label = 'DEV'
+    handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
+  } else if (cleanHost === 'pinterest.com' || cleanHost.endsWith('.pinterest.com')) {
+    platform = 'pinterest'
+    label = 'Pinterest'
+    handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
+  } else if (cleanHost === 'snapchat.com' || cleanHost.endsWith('.snapchat.com')) {
+    platform = 'snapchat'
+    label = 'Snapchat'
+    handle =
+      firstSeg === 'add' && secondSeg
+        ? `@${secondSeg}`
+        : firstSeg
+          ? `@${firstSeg.replace(/^@/, '')}`
+          : cleanHost
+  } else if (
     cleanHost === 'behance.net' ||
     cleanHost === 'dribbble.com' ||
     cleanHost === 'figma.com' ||
     cleanHost === 'read.cv' ||
-    cleanHost === 'bento.me'
+    cleanHost === 'bento.me' ||
+    cleanHost === 'linktr.ee' ||
+    cleanHost.endsWith('.substack.com') ||
+    cleanHost === 'substack.com'
   ) {
     platform = 'portfolio'
     label =
@@ -343,7 +472,11 @@ export function classifyProfileUrl(rawUrl, customLabel = '') {
             ? 'Figma'
             : cleanHost === 'read.cv'
               ? 'Read.cv'
-              : 'Bento'
+              : cleanHost === 'bento.me'
+                ? 'Bento'
+                : cleanHost === 'linktr.ee'
+                  ? 'Linktree'
+                  : 'Substack'
     handle = firstSeg ? `@${firstSeg.replace(/^@/, '')}` : cleanHost
   }
 

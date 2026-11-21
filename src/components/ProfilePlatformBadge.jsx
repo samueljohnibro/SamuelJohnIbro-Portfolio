@@ -49,6 +49,81 @@ export function PlatformIcon({ platform = 'website' }) {
           />
         </svg>
       )
+    case 'facebook':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="review-platform-icon">
+          <path
+            fill="currentColor"
+            d="M13.5 21V12.8H16.2L16.6 9.6H13.5V7.55C13.5 6.62 13.76 6 15.09 6H16.75V3.14C16.46 3.1 15.48 3 14.34 3C11.95 3 10.31 4.46 10.31 7.14V9.6H7.55V12.8H10.31V21H13.5Z"
+          />
+        </svg>
+      )
+    case 'tiktok':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="review-platform-icon">
+          <path
+            fill="currentColor"
+            d="M16.6 5.82C15.91 5.04 15.5 4.02 15.5 2.9H12.4V15.4C12.4 16.83 11.24 18 9.8 18C8.36 18 7.2 16.83 7.2 15.4C7.2 13.97 8.36 12.8 9.8 12.8C10.07 12.8 10.33 12.84 10.57 12.92V9.74C10.32 9.7 10.06 9.68 9.8 9.68C6.65 9.68 4.1 12.24 4.1 15.4C4.1 18.56 6.65 21.1 9.8 21.1C12.95 21.1 15.5 18.56 15.5 15.4V9.04C16.75 9.94 18.29 10.47 19.95 10.47V7.38C18.67 7.38 17.48 6.8 16.6 5.82Z"
+          />
+        </svg>
+      )
+    case 'threads':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="review-platform-icon">
+          <path
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            d="M19.5 12C19.5 7.5 16.4 4 12 4C7.6 4 4.5 7.5 4.5 12C4.5 16.5 7.6 20 12 20C14.7 20 16.9 18.9 18.2 17.2M15.4 12C15.4 14.1 14 15.5 12 15.5C10.2 15.5 9 14.2 9 12.4C9 10.7 10.3 9.5 12.1 9.5C13.9 9.5 15.2 10.5 15.4 12ZM15.4 12C15.6 13.7 16.7 14.5 17.9 14.2C18.9 13.9 19.5 13 19.5 11.7"
+          />
+        </svg>
+      )
+    case 'telegram':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="review-platform-icon">
+          <path
+            fill="currentColor"
+            d="M21.4 4.3L3.1 11.4C1.9 11.9 1.9 12.6 2.9 12.9L7.6 14.4L18.4 7.6C18.9 7.3 19.4 7.5 19 7.8L10.3 15.7L10 20.1C10.5 20.1 10.7 19.9 11 19.6L13.4 17.3L18.4 21C19.3 21.5 20 21.2 20.2 20.1L22.5 5.7C22.8 4.4 22.1 3.9 21.4 4.3Z"
+          />
+        </svg>
+      )
+    case 'bluesky':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="review-platform-icon">
+          <path
+            fill="currentColor"
+            d="M12 10.8C10.9 8.6 8 4.7 5.3 3.4C3.1 2.3 2.3 3.4 2.3 5.2C2.3 7.6 3.6 11.6 4.7 12.9C6 14.4 8.2 14.8 9.9 14.5C7 15 4.4 16.1 6.7 18.8C9.2 21.6 11.1 18.4 12 16.4C12.9 18.4 14.8 21.6 17.3 18.8C19.6 16.1 17 15 14.1 14.5C15.8 14.8 18 14.4 19.3 12.9C20.4 11.6 21.7 7.6 21.7 5.2C21.7 3.4 20.9 2.3 18.7 3.4C16 4.7 13.1 8.6 12 10.8Z"
+          />
+        </svg>
+      )
+    case 'twitch':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="review-platform-icon">
+          <path
+            fill="currentColor"
+            d="M4.3 3L3 6.3V19.3H7.5V22L10.3 19.3H14.5L21 12.8V3H4.3ZM19 11.9L15.7 15.2H11.5L8.7 17.9V15.2H5.2V5H19V11.9ZM15.5 7.5H13.5V12.5H15.5V7.5ZM11 7.5H9V12.5H11V7.5Z"
+          />
+        </svg>
+      )
+    case 'reddit':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="review-platform-icon">
+          <circle cx="12" cy="13.5" r="7" fill="none" stroke="currentColor" strokeWidth="1.7" />
+          <circle cx="9.5" cy="12.8" r="1.1" fill="currentColor" />
+          <circle cx="14.5" cy="12.8" r="1.1" fill="currentColor" />
+          <path fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" d="M9.6 16C10.8 16.9 13.2 16.9 14.4 16M12 6.5L13.5 3.5L17.5 4.5" />
+        </svg>
+      )
+    case 'gitlab':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="review-platform-icon">
+          <path
+            fill="currentColor"
+            d="M12 20.5L15.6 9.5H8.4L12 20.5ZM12 20.5L8.4 9.5H3.3L12 20.5ZM3.3 9.5L2.2 12.8C2.1 13.1 2.2 13.5 2.5 13.7L12 20.5L3.3 9.5ZM3.3 9.5H8.4L6.2 2.8C6.1 2.5 5.6 2.5 5.5 2.8L3.3 9.5ZM12 20.5L15.6 9.5H20.7L12 20.5ZM20.7 9.5L21.8 12.8C21.9 13.1 21.8 13.5 21.5 13.7L12 20.5L20.7 9.5ZM20.7 9.5H15.6L17.8 2.8C17.9 2.5 18.4 2.5 18.5 2.8L20.7 9.5Z"
+          />
+        </svg>
+      )
     case 'portfolio':
       return (
         <svg viewBox="0 0 24 24" aria-hidden="true" className="review-platform-icon">

@@ -275,6 +275,7 @@ async function ensureDatabaseReady(db) {
         comment TEXT NOT NULL,
         profiles_json TEXT NOT NULL DEFAULT '[]',
         avatar_url TEXT NOT NULL DEFAULT '',
+        avatar_checked_at TEXT NOT NULL DEFAULT '',
         edit_token_hash TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'approved',
         verified INTEGER NOT NULL DEFAULT 0,
@@ -323,6 +324,16 @@ async function ensureDatabaseReady(db) {
     await db
       .prepare(
         "ALTER TABLE reviews ADD COLUMN edit_token_hash TEXT NOT NULL DEFAULT ''"
+      )
+      .run()
+  } catch {
+    // Column already exists
+  }
+
+  try {
+    await db
+      .prepare(
+        "ALTER TABLE reviews ADD COLUMN avatar_checked_at TEXT NOT NULL DEFAULT ''"
       )
       .run()
   } catch {
@@ -702,7 +713,7 @@ function serializePublicReview(row, options = {}) {
   }
 }
 
-async function readHtmlHeadChunk(response, maxBytes = 96 * 1024) {
+async function readHtmlHeadChunk(response, maxBytes = 160 * 1024) {
   const reader = response.body?.getReader()
   if (!reader) {
     const full = await response.text()
@@ -718,7 +729,11 @@ async function readHtmlHeadChunk(response, maxBytes = 96 * 1024) {
       if (value) {
         totalBytes += value.byteLength
         accumulated += decoder.decode(value, { stream: true })
-        if (accumulated.toLowerCase().includes('</head>')) {
+        const lower = accumulated.toLowerCase()
+        if (
+          lower.includes('</head>') &&
+          (lower.includes('og:image') || lower.includes('twitter:image'))
+        ) {
           break
         }
       }
@@ -733,7 +748,81 @@ async function readHtmlHeadChunk(response, maxBytes = 96 * 1024) {
   return accumulated
 }
 
-async function fetchVerifiedImage(imageUrl, platform = '', { inlineIfSmall = false, maxInlineBytes = 160 * 1024 } = {}) {
+const AVATAR_RESOLVER_VERSION = 'v2'
+
+const SOCIAL_PREVIEW_UAS = [
+  'Twitterbot/1.0',
+  'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+  'WhatsApp/2.23.20.0',
+  AVATAR_USER_AGENT,
+]
+
+const INLINE_EXPIRING_PLATFORMS = new Set([
+  'linkedin',
+  'instagram',
+  'threads',
+  'tiktok',
+  'facebook',
+  'telegram',
+])
+
+function detectAvatarPlatformFromHost(cleanHost, explicitPlatform = '') {
+  if (cleanHost === 'github.com' || cleanHost.endsWith('.github.com')) return 'github'
+  if (cleanHost === 'linkedin.com' || cleanHost.endsWith('.linkedin.com')) return 'linkedin'
+  if (
+    cleanHost === 'x.com' ||
+    cleanHost === 'twitter.com' ||
+    cleanHost.endsWith('.twitter.com')
+  ) {
+    return 'x'
+  }
+  if (cleanHost === 'instagram.com' || cleanHost.endsWith('.instagram.com')) return 'instagram'
+  if (cleanHost === 'facebook.com' || cleanHost === 'm.facebook.com' || cleanHost === 'fb.com') {
+    return 'facebook'
+  }
+  if (cleanHost === 'tiktok.com' || cleanHost.endsWith('.tiktok.com')) return 'tiktok'
+  if (cleanHost === 'threads.net' || cleanHost === 'threads.com') return 'threads'
+  if (cleanHost === 'youtube.com' || cleanHost === 'm.youtube.com' || cleanHost === 'youtu.be') {
+    return 'youtube'
+  }
+  if (cleanHost === 'bsky.app') return 'bluesky'
+  if (cleanHost === 't.me' || cleanHost === 'telegram.me') return 'telegram'
+  if (cleanHost === 'medium.com' || cleanHost.endsWith('.medium.com')) return 'medium'
+  if (cleanHost === 'twitch.tv' || cleanHost.endsWith('.twitch.tv')) return 'twitch'
+  if (cleanHost === 'reddit.com' || cleanHost.endsWith('.reddit.com')) return 'reddit'
+  if (cleanHost === 'gitlab.com') return 'gitlab'
+  if (cleanHost === 'dev.to') return 'devto'
+  if (cleanHost === 'pinterest.com' || cleanHost.endsWith('.pinterest.com')) return 'pinterest'
+  if (cleanHost === 'dribbble.com') return 'dribbble'
+  if (cleanHost === 'substack.com' || cleanHost.endsWith('.substack.com')) return 'substack'
+  if (cleanHost === 'soundcloud.com') return 'soundcloud'
+  return explicitPlatform || 'website'
+}
+
+function isLikelyGitHubIdenticonPng(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 28) return false
+  // Check PNG signature (89 50 4E 47 0D 0A 1A 0A)
+  if (
+    bytes[0] !== 0x89 ||
+    bytes[1] !== 0x50 ||
+    bytes[2] !== 0x4e ||
+    bytes[3] !== 0x47
+  ) {
+    return false
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const width = view.getUint32(16)
+  const height = view.getUint32(20)
+  // GitHub generated identicons are 420x420 2-color block PNGs (~2-8 KB);
+  // real uploaded PNG avatars on GitHub are resized to 460x460 or are much larger.
+  return width === 420 && height === 420 && bytes.byteLength < 12000
+}
+
+async function fetchVerifiedImage(
+  imageUrl,
+  platform = '',
+  { inlineIfSmall = false, maxInlineBytes = 160 * 1024 } = {}
+) {
   // Generic pre-fetch check (platform-specific host check runs on finalUrl AFTER redirects)
   if (!imageUrl || isPlaceholderOrMissingAvatar(imageUrl)) return null
   let parsed
@@ -753,13 +842,16 @@ async function fetchVerifiedImage(imageUrl, platform = '', { inlineIfSmall = fal
         'User-Agent': AVATAR_USER_AGENT,
         Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8',
       },
-      signal: AbortSignal.timeout(3500),
+      signal: AbortSignal.timeout(4500),
     })
     if (!res.ok) return null
     const finalUrl = res.url || parsed.toString()
     if (isPlaceholderOrMissingAvatar(finalUrl, platform)) return null
 
-    const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+    const contentType = (res.headers.get('content-type') || '')
+      .split(';')[0]
+      .trim()
+      .toLowerCase()
     if (!ALLOWED_AVATAR_MIME_RE.test(contentType)) return null
 
     const contentLengthHeader = Number(res.headers.get('content-length') || 0)
@@ -800,13 +892,19 @@ function extractMetaImageCandidates(html, baseOrigin) {
     /<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:image(?::src)?["']/i,
     /<meta\s+[^>]*property=["']twitter:image(?::src)?["'][^>]*content=["']([^"']+)["']/i,
     /<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']twitter:image(?::src)?["']/i,
+    /"image"\s*:\s*\{[^}]*"contentUrl"\s*:\s*"([^"]+)"/i,
+    /"avatar(?:Larger|Medium)"\s*:\s*"([^"]+)"/i,
   ]
 
   const seen = new Set()
   for (const regex of patterns) {
     const match = html.match(regex)
     if (!match?.[1]) continue
-    let raw = match[1].replace(/&amp;/g, '&').trim()
+    let raw = match[1]
+      .replace(/&amp;/g, '&')
+      .replace(/\\u002F/gi, '/')
+      .replace(/\\\//g, '/')
+      .trim()
     if (!raw) continue
     try {
       if (raw.startsWith('//')) {
@@ -837,22 +935,26 @@ async function resolveGitHubAvatar(username) {
       fetch(identiconUrl, {
         redirect: 'follow',
         headers: { 'User-Agent': AVATAR_USER_AGENT },
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(3500),
       }).catch(() => null),
     ])
 
     if (!avatarInfo?.url) return ''
 
-    if (avatarInfo.bytes && identiconRes?.ok) {
-      const identBytes = new Uint8Array(await identiconRes.arrayBuffer())
-      if (identBytes.byteLength === avatarInfo.bytes.byteLength) {
-        const [avatarHash, identHash] = await Promise.all([
-          sha256BytesHex(avatarInfo.bytes),
-          sha256BytesHex(identBytes),
-        ])
-        if (avatarHash === identHash) {
-          // Account has no uploaded profile photo — only GitHub's default identicon
-          return ''
+    if (avatarInfo.bytes) {
+      if (isLikelyGitHubIdenticonPng(avatarInfo.bytes)) {
+        return ''
+      }
+      if (identiconRes?.ok) {
+        const identBytes = new Uint8Array(await identiconRes.arrayBuffer())
+        if (identBytes.byteLength === avatarInfo.bytes.byteLength) {
+          const [avatarHash, identHash] = await Promise.all([
+            sha256BytesHex(avatarInfo.bytes),
+            sha256BytesHex(identBytes),
+          ])
+          if (avatarHash === identHash) {
+            return ''
+          }
         }
       }
     }
@@ -870,9 +972,65 @@ async function resolveGitHubAvatar(username) {
   }
 }
 
+async function resolveViaUnavatar(provider, handle, platform) {
+  const cleanHandle = String(handle || '').replace(/^@/, '').trim()
+  if (!cleanHandle) return ''
+  const inlineExpiringCdn = INLINE_EXPIRING_PLATFORMS.has(platform)
+  const jsonUrl = `https://unavatar.io/${encodeURIComponent(provider)}/${encodeURIComponent(cleanHandle)}?json&fallback=false`
+  try {
+    const res = await fetch(jsonUrl, {
+      headers: { 'User-Agent': AVATAR_USER_AGENT, Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return ''
+    const data = await res.json().catch(() => null)
+    let candidate = typeof data?.url === 'string' ? data.url.trim() : ''
+    if (!candidate) return ''
+    if (platform === 'x') {
+      candidate = candidate.replace(/_normal(\.[a-z]+)$/i, '_200x200$1')
+    }
+    if (isPlaceholderOrMissingAvatar(candidate, platform)) return ''
+
+    const verified = await fetchVerifiedImage(candidate, platform, {
+      inlineIfSmall: inlineExpiringCdn,
+    })
+    if (verified?.url) return verified.url
+
+    // Secondary fallback: fetch the already-validated image bytes through unavatar directly if CDN blocks Worker IP
+    if (inlineExpiringCdn) {
+      const directUrl = `https://unavatar.io/${encodeURIComponent(provider)}/${encodeURIComponent(cleanHandle)}?fallback=false`
+      const directRes = await fetch(directUrl, {
+        headers: {
+          'User-Agent': AVATAR_USER_AGENT,
+          Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8',
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(5000),
+      })
+      if (directRes.ok) {
+        const contentType = (directRes.headers.get('content-type') || '')
+          .split(';')[0]
+          .trim()
+          .toLowerCase()
+        if (ALLOWED_AVATAR_MIME_RE.test(contentType)) {
+          const buf = new Uint8Array(await directRes.arrayBuffer())
+          if (buf.byteLength >= 300 && buf.byteLength <= 160 * 1024) {
+            return `data:${contentType};base64,${bytesToBase64(buf)}`
+          }
+        }
+      }
+    }
+  } catch {
+    // Graceful fallback to HTML crawler
+  }
+  return ''
+}
+
 async function resolveXAvatar(handle) {
   const cleanHandle = String(handle || '').replace(/^@/, '').trim()
   if (!cleanHandle) return ''
+  const viaUnavatar = await resolveViaUnavatar('x', cleanHandle, 'x')
+  if (viaUnavatar) return viaUnavatar
   try {
     const res = await fetch(
       `https://api.fxtwitter.com/${encodeURIComponent(cleanHandle)}`,
@@ -881,7 +1039,7 @@ async function resolveXAvatar(handle) {
           'User-Agent': AVATAR_USER_AGENT,
           Accept: 'application/json',
         },
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(4000),
       }
     )
     if (!res.ok) return ''
@@ -889,11 +1047,165 @@ async function resolveXAvatar(handle) {
     let candidate = data?.user?.avatar_url || ''
     if (!candidate || isPlaceholderOrMissingAvatar(candidate, 'x')) return ''
     candidate = candidate.replace(/_normal(\.[a-z]+)$/i, '_200x200$1')
-    const verified = await fetchVerifiedImage(candidate, 'x', { inlineIfSmall: false })
+    const verified = await fetchVerifiedImage(candidate, 'x', {
+      inlineIfSmall: false,
+    })
     return verified?.url || ''
   } catch {
     return ''
   }
+}
+
+async function resolveBlueskyAvatar(actor) {
+  const cleanActor = String(actor || '').replace(/^@/, '').trim()
+  if (!cleanActor) return ''
+  try {
+    const res = await fetch(
+      `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(cleanActor)}`,
+      {
+        headers: { 'User-Agent': AVATAR_USER_AGENT, Accept: 'application/json' },
+        signal: AbortSignal.timeout(4000),
+      }
+    )
+    if (!res.ok) return ''
+    const data = await res.json().catch(() => null)
+    const candidate = data?.avatar || ''
+    if (!candidate || isPlaceholderOrMissingAvatar(candidate, 'bluesky')) return ''
+    const verified = await fetchVerifiedImage(candidate, 'bluesky', {
+      inlineIfSmall: false,
+    })
+    return verified?.url || ''
+  } catch {
+    return ''
+  }
+}
+
+async function resolveGitLabAvatar(username) {
+  const cleanUser = String(username || '').replace(/^@/, '').trim()
+  if (!cleanUser) return ''
+  try {
+    const res = await fetch(
+      `https://gitlab.com/api/v4/users?username=${encodeURIComponent(cleanUser)}`,
+      {
+        headers: { 'User-Agent': AVATAR_USER_AGENT, Accept: 'application/json' },
+        signal: AbortSignal.timeout(4000),
+      }
+    )
+    if (!res.ok) return ''
+    const users = await res.json().catch(() => null)
+    let candidate = Array.isArray(users) ? users[0]?.avatar_url || '' : ''
+    if (!candidate) return ''
+    // For Gravatar URLs, force d=404 so accounts without a custom Gravatar return 404 instead of an identicon
+    try {
+      const u = new URL(candidate)
+      if (u.hostname.includes('gravatar.com')) {
+        u.searchParams.set('d', '404')
+        u.searchParams.set('s', '200')
+        candidate = u.toString()
+      }
+    } catch {
+      // ignore
+    }
+    const verified = await fetchVerifiedImage(candidate, 'gitlab', {
+      inlineIfSmall: false,
+    })
+    return verified?.url || ''
+  } catch {
+    return ''
+  }
+}
+
+async function resolveDevtoAvatar(username) {
+  const cleanUser = String(username || '').replace(/^@/, '').trim()
+  if (!cleanUser) return ''
+  try {
+    const res = await fetch(
+      `https://dev.to/api/users/by_username?url=${encodeURIComponent(cleanUser)}`,
+      {
+        headers: { 'User-Agent': AVATAR_USER_AGENT, Accept: 'application/json' },
+        signal: AbortSignal.timeout(4000),
+      }
+    )
+    if (!res.ok) return ''
+    const data = await res.json().catch(() => null)
+    const candidate = data?.profile_image || ''
+    if (!candidate || isPlaceholderOrMissingAvatar(candidate, 'devto')) return ''
+    const verified = await fetchVerifiedImage(candidate, 'devto', {
+      inlineIfSmall: false,
+    })
+    return verified?.url || ''
+  } catch {
+    return ''
+  }
+}
+
+async function resolveRedditAvatar(username) {
+  const cleanUser = String(username || '').replace(/^@/, '').trim()
+  if (!cleanUser) return ''
+  try {
+    const res = await fetch(
+      `https://unavatar.io/reddit/${encodeURIComponent(cleanUser)}?json&fallback=false`,
+      {
+        headers: { 'User-Agent': AVATAR_USER_AGENT, Accept: 'application/json' },
+        signal: AbortSignal.timeout(4000),
+      }
+    )
+    if (!res.ok) return ''
+    const data = await res.json().catch(() => null)
+    const candidate = data?.url || ''
+    if (!candidate || isPlaceholderOrMissingAvatar(candidate, 'reddit')) return ''
+    const verified = await fetchVerifiedImage(candidate, 'reddit', {
+      inlineIfSmall: false,
+    })
+    return verified?.url || ''
+  } catch {
+    return ''
+  }
+}
+
+async function resolveHtmlProfileAvatar(parsed, platform) {
+  const inlineExpiringCdn = INLINE_EXPIRING_PLATFORMS.has(platform)
+  // Social platforms serve full OG profile metadata to link-preview crawlers (Twitterbot, FacebookBot, WhatsApp)
+  // while blocking generic browser UAs from datacenter IPs (e.g. LinkedIn HTTP 999).
+  const userAgents =
+    platform === 'website'
+      ? [AVATAR_USER_AGENT, SOCIAL_PREVIEW_UAS[0]]
+      : SOCIAL_PREVIEW_UAS
+
+  for (const ua of userAgents) {
+    try {
+      const pageRes = await fetch(parsed.toString(), {
+        headers: {
+          'User-Agent': ua,
+          Accept:
+            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(4500),
+      })
+      if (!pageRes.ok) continue
+
+      const htmlChunk = await readHtmlHeadChunk(pageRes, 160 * 1024)
+      const candidates = extractMetaImageCandidates(htmlChunk, parsed.origin)
+      if (candidates.length === 0) continue
+
+      for (const candidate of candidates) {
+        if (isPlaceholderOrMissingAvatar(candidate, platform)) continue
+        const verified = await fetchVerifiedImage(candidate, platform, {
+          inlineIfSmall: inlineExpiringCdn,
+        })
+        if (verified?.url) {
+          return verified.url
+        }
+      }
+      // If we got HTTP 200 and parsed metadata candidates, all of which were placeholders (no photo), don't retry more UAs
+      return ''
+    } catch {
+      // try next User-Agent
+    }
+  }
+  return ''
 }
 
 async function resolveAvatarFromProfileUrl(profileUrl, explicitPlatform = '') {
@@ -905,57 +1217,112 @@ async function resolveAvatarFromProfileUrl(profileUrl, explicitPlatform = '') {
 
     const cleanHost = parsed.hostname.replace(/^www\./i, '').toLowerCase()
     const segments = cleanPathSegments(parsed.pathname)
-
-    const platform =
-      explicitPlatform ||
-      (cleanHost === 'github.com' || cleanHost.endsWith('.github.com')
-        ? 'github'
-        : cleanHost === 'linkedin.com' || cleanHost.endsWith('.linkedin.com')
-          ? 'linkedin'
-          : cleanHost === 'x.com' ||
-              cleanHost === 'twitter.com' ||
-              cleanHost.endsWith('.twitter.com')
-            ? 'x'
-            : cleanHost === 'instagram.com' || cleanHost.endsWith('.instagram.com')
-              ? 'instagram'
-              : 'website')
+    const platform = detectAvatarPlatformFromHost(cleanHost, explicitPlatform)
 
     if (platform === 'github') {
       if (!segments[0]) return ''
       return await resolveGitHubAvatar(segments[0])
     }
-
     if (platform === 'x') {
       if (!segments[0]) return ''
       return await resolveXAvatar(segments[0])
     }
-
-    // LinkedIn, Instagram, YouTube, portfolio & personal websites: inspect HTML metadata
-    const pageRes = await fetch(parsed.toString(), {
-      headers: {
-        'User-Agent': AVATAR_USER_AGENT,
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(3500),
-    })
-    if (!pageRes.ok) return ''
-
-    const htmlChunk = await readHtmlHeadChunk(pageRes, 96 * 1024)
-    const candidates = extractMetaImageCandidates(htmlChunk, parsed.origin)
-    // Inline LinkedIn / Instagram avatars as data URLs so signed CDN URLs never expire or get CORP-blocked
-    const inlineExpiringCdn = platform === 'linkedin' || platform === 'instagram'
-
-    for (const candidate of candidates) {
-      if (isPlaceholderOrMissingAvatar(candidate, platform)) continue
-      const verified = await fetchVerifiedImage(candidate, platform, {
-        inlineIfSmall: inlineExpiringCdn,
-      })
-      if (verified?.url) {
-        return verified.url
+    if (platform === 'linkedin') {
+      const slug =
+        (segments[0] === 'in' || segments[0] === 'company') && segments[1]
+          ? segments[1]
+          : segments[0]
+      if (slug) {
+        const viaUnavatar = await resolveViaUnavatar('linkedin', slug, 'linkedin')
+        if (viaUnavatar) return viaUnavatar
       }
+      return await resolveHtmlProfileAvatar(parsed, 'linkedin')
     }
+    if (platform === 'youtube') {
+      const handle = segments[0]?.startsWith('@')
+        ? segments[0].slice(1)
+        : (segments[0] === 'c' || segments[0] === 'user') && segments[1]
+          ? segments[1]
+          : ''
+      if (handle) {
+        const viaUnavatar = await resolveViaUnavatar('youtube', handle, 'youtube')
+        if (viaUnavatar) return viaUnavatar
+      }
+      return await resolveHtmlProfileAvatar(parsed, 'youtube')
+    }
+    if (platform === 'tiktok') {
+      const handle = segments[0] ? segments[0].replace(/^@/, '') : ''
+      if (handle) {
+        const viaUnavatar = await resolveViaUnavatar('tiktok', handle, 'tiktok')
+        if (viaUnavatar) return viaUnavatar
+      }
+      return await resolveHtmlProfileAvatar(parsed, 'tiktok')
+    }
+    if (platform === 'telegram') {
+      const handle = segments[0] ? segments[0].replace(/^@/, '') : ''
+      if (handle) {
+        const viaUnavatar = await resolveViaUnavatar('telegram', handle, 'telegram')
+        if (viaUnavatar) return viaUnavatar
+      }
+      return await resolveHtmlProfileAvatar(parsed, 'telegram')
+    }
+    if (platform === 'twitch') {
+      const handle = segments[0] ? segments[0].replace(/^@/, '') : ''
+      if (handle) {
+        const viaUnavatar = await resolveViaUnavatar('twitch', handle, 'twitch')
+        if (viaUnavatar) return viaUnavatar
+      }
+      return await resolveHtmlProfileAvatar(parsed, 'twitch')
+    }
+    if (platform === 'dribbble') {
+      const handle = segments[0] ? segments[0].replace(/^@/, '') : ''
+      if (handle) {
+        const viaUnavatar = await resolveViaUnavatar('dribbble', handle, 'dribbble')
+        if (viaUnavatar) return viaUnavatar
+      }
+      return await resolveHtmlProfileAvatar(parsed, 'dribbble')
+    }
+    if (platform === 'substack') {
+      const handle = cleanHost.endsWith('.substack.com')
+        ? cleanHost.replace(/\.substack\.com$/, '')
+        : segments[0]
+          ? segments[0].replace(/^@/, '')
+          : ''
+      if (handle) {
+        const viaUnavatar = await resolveViaUnavatar('substack', handle, 'substack')
+        if (viaUnavatar) return viaUnavatar
+      }
+      return await resolveHtmlProfileAvatar(parsed, 'substack')
+    }
+    if (platform === 'soundcloud') {
+      const handle = segments[0] ? segments[0].replace(/^@/, '') : ''
+      if (handle) {
+        const viaUnavatar = await resolveViaUnavatar('soundcloud', handle, 'soundcloud')
+        if (viaUnavatar) return viaUnavatar
+      }
+      return await resolveHtmlProfileAvatar(parsed, 'soundcloud')
+    }
+    if (platform === 'bluesky') {
+      const actor = segments[0] === 'profile' ? segments[1] : segments[0]
+      if (!actor) return ''
+      return await resolveBlueskyAvatar(actor)
+    }
+    if (platform === 'gitlab') {
+      if (!segments[0]) return ''
+      return await resolveGitLabAvatar(segments[0])
+    }
+    if (platform === 'devto') {
+      if (!segments[0]) return ''
+      return await resolveDevtoAvatar(segments[0])
+    }
+    if (platform === 'reddit') {
+      const user =
+        segments[0] === 'u' || segments[0] === 'user' ? segments[1] : ''
+      if (!user) return ''
+      return await resolveRedditAvatar(user)
+    }
+
+    return await resolveHtmlProfileAvatar(parsed, platform)
   } catch {
     // Graceful network/timeout fallback
   }
@@ -980,7 +1347,7 @@ async function resolveReviewerAvatar(uploadedPhoto, profiles = []) {
       const platform = typeof entry === 'object' ? entry?.platform || '' : ''
       if (!url) continue
       const resolved = await resolveAvatarFromProfileUrl(url, platform)
-      if (resolved && !isPlaceholderOrMissingAvatar(resolved, platform)) {
+      if (resolved) {
         return resolved
       }
     }
@@ -1083,15 +1450,53 @@ async function readApprovedReviewsAndSummary(db, viewerIpHash = '') {
     .prepare(
       `SELECT id, target_type, target_id, target_title, rating,
               reviewer_name, reviewer_role, relationship, comment,
-              profiles_json, avatar_url, verified, verified_label, featured,
-              owner_reply, owner_reply_at, ip_hash, created_at
+              profiles_json, avatar_url, avatar_checked_at, verified,
+              verified_label, featured, owner_reply, owner_reply_at,
+              ip_hash, created_at
        FROM reviews
        WHERE status = 'approved'
        ORDER BY featured DESC, created_at DESC
        LIMIT 200`
     )
     .all()
-  const reviews = (results || []).map((row) =>
+
+  const rows = results || []
+
+  // Lazily backfill avatars ONCE per resolver version for reviews that have tagged profiles but no stored avatar
+  const versionPrefix = `${AVATAR_RESOLVER_VERSION}:`
+  const uncheckedRows = rows
+    .filter((row) => {
+      if (row.avatar_url) return false
+      if (String(row.avatar_checked_at || '').startsWith(versionPrefix)) {
+        return false
+      }
+      return parseJsonArraySafe(row.profiles_json).length > 0
+    })
+    .slice(0, 5)
+
+  if (uncheckedRows.length > 0) {
+    const checkedStamp = `${versionPrefix}${new Date().toISOString()}`
+    await Promise.all(
+      uncheckedRows.map(async (row) => {
+        try {
+          const profiles = parseJsonArraySafe(row.profiles_json)
+          const resolved = await resolveReviewerAvatar('', profiles)
+          row.avatar_url = resolved || ''
+          row.avatar_checked_at = checkedStamp
+          await db
+            .prepare(
+              'UPDATE reviews SET avatar_url = ?, avatar_checked_at = ? WHERE id = ?'
+            )
+            .bind(row.avatar_url, checkedStamp, row.id)
+            .run()
+        } catch {
+          // Never fail review feed if a profile fetch fails
+        }
+      })
+    )
+  }
+
+  const reviews = rows.map((row) =>
     serializePublicReview(row, { viewerIpHash })
   )
   return {
@@ -2442,10 +2847,10 @@ async function handleApi(request, env, url) {
       `INSERT INTO reviews (
         id, target_type, target_id, target_title, rating,
         reviewer_name, reviewer_role, relationship, comment,
-        profiles_json, avatar_url, edit_token_hash, status, verified, verified_label, featured,
+        profiles_json, avatar_url, avatar_checked_at, edit_token_hash, status, verified, verified_label, featured,
         owner_reply, owner_reply_at, invite_id, challenge_nonce,
         ip_hash, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?, ?, ?, ?, ?)`
     )
       .bind(
         reviewId,
@@ -2459,6 +2864,7 @@ async function handleApi(request, env, url) {
         comment,
         JSON.stringify(profiles),
         avatarUrl,
+        `${AVATAR_RESOLVER_VERSION}:${nowIso}`,
         editTokenHash,
         status,
         verified,
@@ -2656,6 +3062,7 @@ async function handleApi(request, env, url) {
            comment = ?,
            profiles_json = ?,
            avatar_url = ?,
+           avatar_checked_at = ?,
            updated_at = ?
        WHERE id = ?`
     )
@@ -2667,6 +3074,7 @@ async function handleApi(request, env, url) {
         comment,
         nextProfilesJson,
         nextAvatarUrl,
+        `${AVATAR_RESOLVER_VERSION}:${nowIso}`,
         nowIso,
         reviewId
       )
