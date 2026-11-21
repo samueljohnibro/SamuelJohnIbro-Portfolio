@@ -12,7 +12,10 @@ import {
   resolveHeadlineParts,
   sortProjectsByStatusAndTimeline,
 } from '../data/defaultPortfolio.js'
-import { computeReviewsSummary } from '../data/reviewsMeta.js'
+import {
+  computeReviewsSummary,
+  removeMyReviewSession,
+} from '../data/reviewsMeta.js'
 import { useMasonryGrid } from '../hooks/useMasonryGrid.js'
 import {
   buildJsonLdGraph,
@@ -229,8 +232,11 @@ export function PortfolioPage({
     open: false,
     target: 'overall',
     lockTarget: false,
+    editingReview: null,
     sessionKey: 0,
   })
+  const [deletingReviewId, setDeletingReviewId] = useState(null)
+  const [reviewActionFeedback, setReviewActionFeedback] = useState(null)
 
   const heroText = portfolio.hero.headline || DEFAULT_PORTFOLIO.hero.headline
   const [typedCount, setTypedCount] = useState(0)
@@ -322,6 +328,7 @@ export function PortfolioPage({
               open: true,
               target,
               lockTarget: false,
+              editingReview: null,
               sessionKey: Date.now(),
             })
             requestAnimationFrame(() => {
@@ -338,6 +345,7 @@ export function PortfolioPage({
             open: true,
             target: urlTarget,
             lockTarget: urlTarget !== 'overall',
+            editingReview: null,
             sessionKey: 1,
           })
         })
@@ -451,15 +459,84 @@ export function PortfolioPage({
     (target = 'overall', triggerElement = null, options = {}) => {
       previewReturnFocusRef.current = triggerElement || null
       const resolvedTarget = target || 'overall'
+      setReviewActionFeedback(null)
       setReviewModalState((prev) => ({
         open: true,
         target: resolvedTarget,
         lockTarget: Boolean(options?.lockTarget && resolvedTarget !== 'overall'),
+        editingReview: null,
         sessionKey: prev.sessionKey + 1,
       }))
     },
     []
   )
+
+  const handleEditReview = useCallback(
+    (review, editToken = '', triggerElement = null) => {
+      if (!review?.id) return
+      previewReturnFocusRef.current = triggerElement || null
+      setReviewActionFeedback(null)
+      setReviewModalState((prev) => ({
+        open: true,
+        target: review.targetId || 'overall',
+        lockTarget: true,
+        editingReview: {
+          ...review,
+          editToken: editToken || '',
+        },
+        sessionKey: prev.sessionKey + 1,
+      }))
+    },
+    []
+  )
+
+  const handleDeleteReview = useCallback(async (review, editToken = '') => {
+    if (!review?.id) return
+    setDeletingReviewId(review.id)
+    setReviewActionFeedback(null)
+    try {
+      const res = await fetch(`/api/reviews/${encodeURIComponent(review.id)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editToken: editToken || '' }),
+      })
+      const payload = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(
+          payload?.error || 'Could not delete this review. Please try again.'
+        )
+      }
+      removeMyReviewSession(review.id)
+      if (Array.isArray(payload?.reviews)) {
+        setReviews(payload.reviews)
+        setReviewsSummary(
+          payload.summary || computeReviewsSummary(payload.reviews)
+        )
+      } else {
+        setReviews((prev) => {
+          const next = prev.filter((item) => item.id !== review.id)
+          setReviewsSummary(computeReviewsSummary(next))
+          return next
+        })
+      }
+      setReviewActionFeedback({
+        type: 'success',
+        text: payload?.message || 'Your review was deleted.',
+      })
+      if (typeof BroadcastChannel !== 'undefined') {
+        const ch = new BroadcastChannel('sji-portfolio-updates')
+        ch.postMessage({ type: 'reviews-updated' })
+        ch.close()
+      }
+    } catch (err) {
+      setReviewActionFeedback({
+        type: 'error',
+        text: err.message || 'Could not delete this review.',
+      })
+    } finally {
+      setDeletingReviewId(null)
+    }
+  }, [])
 
   const handleOpenProjectReview = useCallback(
     (projectId, triggerElement = null) => {
@@ -469,7 +546,11 @@ export function PortfolioPage({
   )
 
   const handleCloseReviewModal = useCallback(() => {
-    setReviewModalState((prev) => ({ ...prev, open: false }))
+    setReviewModalState((prev) => ({
+      ...prev,
+      open: false,
+      editingReview: null,
+    }))
     const triggerEl = previewReturnFocusRef.current
     previewReturnFocusRef.current = null
     if (triggerEl && typeof triggerEl.focus === 'function') {
@@ -1767,6 +1848,11 @@ export function PortfolioPage({
           activeFilter={reviewFilter}
           onChangeFilter={setReviewFilter}
           onOpenWriteReview={handleOpenWriteReview}
+          onEditReview={handleEditReview}
+          onDeleteReview={handleDeleteReview}
+          deletingReviewId={deletingReviewId}
+          actionFeedback={reviewActionFeedback}
+          onDismissFeedback={() => setReviewActionFeedback(null)}
           loading={reviewsLoading}
         />
       )}
@@ -1842,6 +1928,7 @@ export function PortfolioPage({
           moderationMode={reviewsSettings.moderationMode}
           publicSubmissionsEnabled={reviewsSettings.publicSubmissionsEnabled}
           turnstileSiteKey={turnstileSiteKey}
+          editingReview={reviewModalState.editingReview}
           onSubmitted={handleReviewSubmitted}
         />
       )}

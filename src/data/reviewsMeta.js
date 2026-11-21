@@ -53,7 +53,7 @@ export const PROFILE_PLATFORM_PRESETS = [
   },
 ]
 
-function isDisallowedHostname(hostname) {
+export function isDisallowedHostname(hostname) {
   const host = String(hostname || '').toLowerCase().trim()
   if (!host) return true
   if (
@@ -73,11 +73,180 @@ function isDisallowedHostname(hostname) {
   return false
 }
 
-function cleanPathSegments(pathname) {
+export function cleanPathSegments(pathname) {
   return String(pathname || '')
     .split('/')
     .map((seg) => seg.trim())
     .filter(Boolean)
+}
+
+export function isPlaceholderOrMissingAvatar(url, platform = '') {
+  if (!url || typeof url !== 'string') return true
+  const trimmed = url.trim()
+  if (!trimmed) return true
+  if (trimmed.startsWith('data:image/')) {
+    return trimmed.startsWith('data:image/svg')
+  }
+
+  let parsed
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return true
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true
+
+  const lower = trimmed.toLowerCase()
+  const pathLower = parsed.pathname.toLowerCase()
+  const hostLower = parsed.hostname.toLowerCase()
+
+  // Reject vector icons, favicons, and generic brand graphics
+  if (
+    pathLower.endsWith('.svg') ||
+    pathLower.endsWith('.ico') ||
+    pathLower.includes('/favicon')
+  ) {
+    return true
+  }
+
+  const placeholderMarkers = [
+    'ghost_person',
+    'ghost-person',
+    'default_profile',
+    'default-profile',
+    'identicon',
+    'placeholder',
+    'default-avatar',
+    'default_avatar',
+    'no-avatar',
+    'no_avatar',
+    'no-photo',
+    'no_photo',
+    'blank_profile',
+    'blank-profile',
+    'avatar-default',
+    'avatar_default',
+    'mystery-man',
+    'mystery_man',
+    'silhouette',
+    'anonymous',
+    'fallback',
+    'generic-avatar',
+    'generic_avatar',
+    'd=mp',
+    'd=mm',
+    'd=identicon',
+    'd=retro',
+    'd=blank',
+    'd=robohash',
+    'd=wavatar',
+    'd=monsterid',
+    'static.licdn.com',
+    'licdn.com/sc/',
+    'linkedin-bug',
+    'linkedin_logo',
+    'linkedin-logo',
+    'abs.twimg.com/sticky/default_profile_images',
+    'abs.twimg.com/responsive-web',
+    'abs.twimg.com/rweb',
+    'twitter_logo',
+    'twitter-logo',
+    'x-logo',
+    'x_logo',
+    'static.cdninstagram.com',
+    '44884218_345707102882519',
+    'instagram_logo',
+    'instagram-logo',
+    'github.githubassets.com',
+    'opengraph.githubassets.com',
+    'identicons.github.com',
+  ]
+
+  if (placeholderMarkers.some((marker) => lower.includes(marker))) {
+    return true
+  }
+
+  // Platform-specific strict checks so we never grab a platform's brand logo or empty shell
+  if (platform === 'linkedin') {
+    if (!hostLower.endsWith('media.licdn.com')) {
+      return true
+    }
+  } else if (platform === 'x') {
+    if (
+      !hostLower.endsWith('pbs.twimg.com') ||
+      !pathLower.includes('/profile_images/')
+    ) {
+      return true
+    }
+  } else if (platform === 'github') {
+    if (!hostLower.endsWith('avatars.githubusercontent.com')) {
+      return true
+    }
+  }
+
+  return false
+}
+
+export const MY_REVIEWS_STORAGE_KEY = 'sji_my_reviews_v1'
+export const REVIEW_EDIT_WINDOW_MS = 5 * 60 * 1000 // 5 minutes
+
+export function saveMyReviewSession(reviewId, editToken, createdAt) {
+  if (typeof window === 'undefined' || !reviewId || !editToken) return
+  try {
+    const existing = getMyReviewSessions()
+    const createdMs = createdAt ? new Date(createdAt).getTime() : Date.now()
+    const expiresAt = new Date(createdMs + REVIEW_EDIT_WINDOW_MS).toISOString()
+    existing[reviewId] = {
+      editToken,
+      expiresAt,
+      createdAt: new Date(createdMs).toISOString(),
+    }
+    window.localStorage.setItem(MY_REVIEWS_STORAGE_KEY, JSON.stringify(existing))
+  } catch {
+    // Ignore storage quota or access errors
+  }
+}
+
+export function getMyReviewSessions() {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(MY_REVIEWS_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return {}
+    const now = Date.now()
+    const valid = {}
+    for (const [id, data] of Object.entries(parsed)) {
+      if (
+        data?.expiresAt &&
+        new Date(data.expiresAt).getTime() > now &&
+        data?.editToken
+      ) {
+        valid[id] = data
+      }
+    }
+    return valid
+  } catch {
+    return {}
+  }
+}
+
+export function removeMyReviewSession(reviewId) {
+  if (typeof window === 'undefined' || !reviewId) return
+  try {
+    const existing = getMyReviewSessions()
+    delete existing[reviewId]
+    window.localStorage.setItem(MY_REVIEWS_STORAGE_KEY, JSON.stringify(existing))
+  } catch {
+    // Ignore
+  }
+}
+
+export function formatRemainingSeconds(totalSeconds) {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const mins = Math.floor(s / 60)
+  const secs = s % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 export function classifyProfileUrl(rawUrl, customLabel = '') {

@@ -9,6 +9,7 @@ import {
   PROFILE_PLATFORM_PRESETS,
   REVIEW_RELATIONSHIPS,
   classifyProfileUrl,
+  saveMyReviewSession,
 } from '../data/reviewsMeta.js'
 import { PlatformIcon } from './ProfilePlatformBadge.jsx'
 import { StarSelector } from './StarRating.jsx'
@@ -20,6 +21,35 @@ function createProfileDraft(preset = PROFILE_PLATFORM_PRESETS[0]) {
     placeholder: preset?.placeholder || 'https://linkedin.com/in/your-profile',
     hintLabel: preset?.label || 'Profile URL',
   }
+}
+
+function compressAndCropAvatar(file, targetSize = 180) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = targetSize
+          canvas.height = targetSize
+          const ctx = canvas.getContext('2d')
+          const minSide = Math.min(img.width, img.height)
+          const sx = (img.width - minSide) / 2
+          const sy = (img.height - minSide) / 2
+          ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, targetSize, targetSize)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.86)
+          resolve(dataUrl)
+        } catch (err) {
+          reject(err)
+        }
+      }
+      img.onerror = reject
+      img.src = e.target.result
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
 }
 
 export function ReviewModal({
@@ -35,13 +65,18 @@ export function ReviewModal({
   moderationMode = 'auto',
   publicSubmissionsEnabled = true,
   turnstileSiteKey = null,
+  editingReview = null,
   onSubmitted,
 }) {
+  const isEditing = Boolean(editingReview?.id)
   const closeButtonRef = useRef(null)
   const turnstileContainerRef = useRef(null)
   const turnstileWidgetIdRef = useRef(null)
 
   const defaultTargetId = useMemo(() => {
+    if (editingReview?.targetId) {
+      return editingReview.targetId
+    }
     if (
       initialTarget &&
       initialTarget !== 'overall' &&
@@ -57,21 +92,36 @@ export function ReviewModal({
       return inviteInfo.targetId
     }
     return 'overall'
-  }, [initialTarget, inviteInfo, projects])
+  }, [editingReview, initialTarget, inviteInfo, projects])
 
-  const isTargetLocked = Boolean(lockTarget && defaultTargetId !== 'overall')
+  const isTargetLocked = Boolean(isEditing || (lockTarget && defaultTargetId !== 'overall'))
   const [selectedTargetOverride, setSelectedTargetOverride] = useState(null)
   const selectedTarget = isTargetLocked
     ? defaultTargetId
     : (selectedTargetOverride ?? defaultTargetId)
-  const [rating, setRating] = useState(5)
-  const [reviewerName, setReviewerName] = useState('')
-  const [reviewerRole, setReviewerRole] = useState('')
-  const [relationship, setRelationship] = useState('Collaborator')
-  const [comment, setComment] = useState('')
-  const [profileInputs, setProfileInputs] = useState(() => [
-    createProfileDraft(PROFILE_PLATFORM_PRESETS[0]),
-  ])
+  const [rating, setRating] = useState(() => Number(editingReview?.rating) || 5)
+  const [reviewerName, setReviewerName] = useState(() => editingReview?.reviewerName || '')
+  const [reviewerRole, setReviewerRole] = useState(() => editingReview?.reviewerRole || '')
+  const [relationship, setRelationship] = useState(
+    () => editingReview?.relationship || 'Collaborator'
+  )
+  const [comment, setComment] = useState(() => editingReview?.comment || '')
+  const [profileInputs, setProfileInputs] = useState(() => {
+    if (Array.isArray(editingReview?.profiles) && editingReview.profiles.length > 0) {
+      return editingReview.profiles.map((p) => ({
+        key: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        url: p.url || '',
+        placeholder: p.placeholder || 'https://linkedin.com/in/your-profile',
+        hintLabel: p.label || 'Profile URL',
+      }))
+    }
+    return [createProfileDraft(PROFILE_PLATFORM_PRESETS[0])]
+  })
+  const [photoDataUrl, setPhotoDataUrl] = useState('')
+  const [photoPreview, setPhotoPreview] = useState(() => editingReview?.avatarUrl || '')
+  const [removePhoto, setRemovePhoto] = useState(false)
+  const [photoLoading, setPhotoLoading] = useState(false)
+
   const [honeypot, setHoneypot] = useState('')
   const [turnstileToken, setTurnstileToken] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -84,7 +134,7 @@ export function ReviewModal({
   }, [isOpen])
 
   useEffect(() => {
-    if (!isOpen || !turnstileSiteKey || typeof window === 'undefined') {
+    if (!isOpen || isEditing || !turnstileSiteKey || typeof window === 'undefined') {
       return undefined
     }
 
@@ -148,7 +198,7 @@ export function ReviewModal({
         turnstileWidgetIdRef.current = null
       }
     }
-  }, [isOpen, turnstileSiteKey])
+  }, [isOpen, isEditing, turnstileSiteKey])
 
   if (!isOpen) return null
 
@@ -158,7 +208,38 @@ export function ReviewModal({
       : null
 
   const isInviteActive = Boolean(inviteInfo?.valid && inviteCode)
-  const submissionsBlocked = !publicSubmissionsEnabled && !isInviteActive
+  const submissionsBlocked = !isEditing && !publicSubmissionsEnabled && !isInviteActive
+
+  const handlePhotoChange = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setError('Please select an image file (PNG, JPG, WebP).')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image must be under 5MB.')
+      return
+    }
+    setPhotoLoading(true)
+    setError('')
+    try {
+      const resized = await compressAndCropAvatar(file)
+      setPhotoDataUrl(resized)
+      setPhotoPreview(resized)
+      setRemovePhoto(false)
+    } catch {
+      setError('Could not process selected image. Try another image.')
+    } finally {
+      setPhotoLoading(false)
+    }
+  }
+
+  const handleRemovePhoto = () => {
+    setPhotoDataUrl('')
+    setPhotoPreview('')
+    setRemovePhoto(true)
+  }
 
   const addProfileRow = (preset) => {
     setProfileInputs((prev) => {
@@ -230,39 +311,67 @@ export function ReviewModal({
       }
     }
 
-    if (turnstileSiteKey && !turnstileToken) {
+    if (!isEditing && turnstileSiteKey && !turnstileToken) {
       setError('Please complete the verification check before submitting.')
       return
     }
 
     setSubmitting(true)
     try {
-      const res = await fetch('/api/reviews', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetType: activeProject ? 'project' : 'overall',
-          targetId: activeProject ? activeProject.id : 'overall',
-          rating,
-          reviewerName: trimmedName,
-          reviewerRole: reviewerRole.trim(),
-          relationship,
-          comment: trimmedComment,
-          profiles: nonEmptyProfiles.map((url) => ({ url })),
-          inviteCode: isInviteActive ? inviteCode : '',
-          challengeToken,
-          turnstileToken,
-          sji_verification_code_trap: honeypot,
-        }),
-      })
-
-      const payload = await res.json().catch(() => ({}))
-      if (payload?.challengeToken) {
-        onChallengeRefresh?.(payload.challengeToken)
+      let res
+      let payload
+      if (isEditing) {
+        res = await fetch(`/api/reviews/${encodeURIComponent(editingReview.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            editToken: editingReview.editToken || '',
+            rating,
+            reviewerName: trimmedName,
+            reviewerRole: reviewerRole.trim(),
+            relationship,
+            comment: trimmedComment,
+            profiles: nonEmptyProfiles.map((url) => ({ url })),
+            photo: photoDataUrl || undefined,
+            removePhoto,
+          }),
+        })
+        payload = await res.json().catch(() => ({}))
+      } else {
+        res = await fetch('/api/reviews', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetType: activeProject ? 'project' : 'overall',
+            targetId: activeProject ? activeProject.id : 'overall',
+            rating,
+            reviewerName: trimmedName,
+            reviewerRole: reviewerRole.trim(),
+            relationship,
+            comment: trimmedComment,
+            profiles: nonEmptyProfiles.map((url) => ({ url })),
+            photo: photoDataUrl || undefined,
+            inviteCode: isInviteActive ? inviteCode : '',
+            challengeToken,
+            turnstileToken,
+            sji_verification_code_trap: honeypot,
+          }),
+        })
+        payload = await res.json().catch(() => ({}))
+        if (payload?.challengeToken) {
+          onChallengeRefresh?.(payload.challengeToken)
+        }
+        if (res.ok && payload?.review?.id && payload?.editToken) {
+          saveMyReviewSession(
+            payload.review.id,
+            payload.editToken,
+            payload.review.createdAt
+          )
+        }
       }
 
       if (!res.ok) {
-        if (window.turnstile && turnstileWidgetIdRef.current !== null) {
+        if (!isEditing && window.turnstile && turnstileWidgetIdRef.current !== null) {
           try {
             window.turnstile.reset(turnstileWidgetIdRef.current)
             setTurnstileToken('')
@@ -271,7 +380,10 @@ export function ReviewModal({
           }
         }
         throw new Error(
-          payload?.error || 'Could not submit your review. Please try again.'
+          payload?.error ||
+            (isEditing
+              ? 'Could not update your review. Please try again.'
+              : 'Could not submit your review. Please try again.')
         )
       }
 
@@ -301,15 +413,25 @@ export function ReviewModal({
       >
         <div className="project-modal-header">
           <div className="project-modal-title-group">
-            <span className="project-modal-live-pill">5-STAR REVIEW</span>
+            <span className="project-modal-live-pill">
+              {isEditing ? '5-MINUTE EDIT WINDOW' : '5-STAR REVIEW'}
+            </span>
             <h3 id="review-modal-title">
               {submittedResult
-                ? 'Review Submitted'
-                : activeProject
-                  ? `Review ${activeProject.title}`
-                  : 'Leave a Review'}
+                ? isEditing
+                  ? 'Review Updated'
+                  : 'Review Submitted'
+                : isEditing
+                  ? `Edit Review · ${editingReview?.targetTitle || 'Samuel'}`
+                  : activeProject
+                    ? `Review ${activeProject.title}`
+                    : 'Leave a Review'}
             </h3>
-            <span className="project-modal-url">No login required</span>
+            <span className="project-modal-url">
+              {isEditing
+                ? 'Adjust your rating, text, profiles or avatar photo'
+                : 'No login required'}
+            </span>
           </div>
 
           <div className="project-modal-actions">
@@ -332,13 +454,17 @@ export function ReviewModal({
                 ★
               </div>
               <h4>
-                {submittedResult.status === 'approved'
-                  ? 'Your review is now live!'
-                  : 'Review received for approval'}
+                {isEditing
+                  ? 'Your review has been updated!'
+                  : submittedResult.status === 'approved'
+                    ? 'Your review is now live!'
+                    : 'Review received for approval'}
               </h4>
               <p>
                 {submittedResult.message ||
                   'Thank you for taking the time to share authentic feedback.'}
+                {!isEditing &&
+                  ' You can edit or delete your review for the next 5 minutes before it locks in.'}
               </p>
 
               {submittedResult.review && (
@@ -395,15 +521,17 @@ export function ReviewModal({
                 </div>
               )}
 
-              {isTargetLocked && activeProject ? (
+              {isTargetLocked ? (
                 <div className="review-locked-target">
                   <span className="review-locked-target-label">
-                    Reviewing project
+                    {activeProject ? 'Reviewing project' : 'Reviewing'}
                   </span>
                   <strong className="review-locked-target-title">
-                    {activeProject.title}
+                    {activeProject
+                      ? activeProject.title
+                      : editingReview?.targetTitle || 'Samuel John-Ibro (Overall)'}
                   </strong>
-                  {activeProject.status && (
+                  {activeProject?.status && (
                     <span className="review-locked-target-status">
                       {activeProject.status}
                     </span>
@@ -555,6 +683,60 @@ export function ReviewModal({
 
               <div className="review-form-group">
                 <div className="review-field-label">
+                  <span>Profile Photo (optional)</span>
+                  <span className="review-field-hint-inline">
+                    Upload your picture or let us fetch it from your tagged profiles
+                  </span>
+                </div>
+
+                <div className="review-photo-uploader">
+                  {photoPreview ? (
+                    <div className="review-photo-preview-box">
+                      <img
+                        src={photoPreview}
+                        alt="Reviewer avatar preview"
+                        className="review-photo-preview-img"
+                      />
+                      <div className="review-photo-preview-info">
+                        <span className="review-photo-preview-label">
+                          {photoDataUrl ? 'Attached custom photo' : 'Profile photo'}
+                        </span>
+                        <button
+                          type="button"
+                          className="review-photo-remove-btn"
+                          onClick={handleRemovePhoto}
+                          disabled={submitting}
+                        >
+                          ✕ Remove photo
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="review-photo-upload-actions">
+                      <label
+                        htmlFor="review-photo-file-input"
+                        className={`secondary-button review-photo-btn${photoLoading ? ' is-loading' : ''}`}
+                      >
+                        <span>📷 {photoLoading ? 'Processing...' : 'Attach Photo'}</span>
+                      </label>
+                      <input
+                        id="review-photo-file-input"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="sr-only"
+                        onChange={handlePhotoChange}
+                        disabled={submitting || photoLoading}
+                      />
+                      <span className="review-photo-note">
+                        If no photo is attached, we automatically check your tagged profiles and use the photo from any profile that has one.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="review-form-group">
+                <div className="review-field-label">
                   <span>
                     Tag Your Real Profile Pages (optional, up to{' '}
                     {MAX_PROFILES_PER_REVIEW})
@@ -647,7 +829,7 @@ export function ReviewModal({
                 />
               </div>
 
-              {turnstileSiteKey && (
+              {!isEditing && turnstileSiteKey && (
                 <div className="review-turnstile-wrap">
                   <div ref={turnstileContainerRef} />
                 </div>
@@ -661,9 +843,11 @@ export function ReviewModal({
 
               <div className="review-form-footer">
                 <p className="review-form-note">
-                  {isInviteActive || moderationMode !== 'manual'
-                    ? 'Published directly to the portfolio — no account needed.'
-                    : 'Your review will appear as soon as Samuel approves it.'}
+                  {isEditing
+                    ? 'Editable for 5 minutes after submission before locking in.'
+                    : isInviteActive || moderationMode !== 'manual'
+                      ? 'Published directly — editable or deletable for 5 minutes.'
+                      : 'Your review will appear as soon as Samuel approves it.'}
                 </p>
 
                 <div className="review-form-actions">
@@ -681,10 +865,14 @@ export function ReviewModal({
                     disabled={submitting || submissionsBlocked}
                   >
                     {submitting
-                      ? 'Submitting...'
-                      : isInviteActive || moderationMode !== 'manual'
-                        ? 'Publish Review ★'
-                        : 'Submit Review ★'}
+                      ? isEditing
+                        ? 'Saving Changes...'
+                        : 'Submitting...'
+                      : isEditing
+                        ? 'Save Changes ★'
+                        : isInviteActive || moderationMode !== 'manual'
+                          ? 'Publish Review ★'
+                          : 'Submit Review ★'}
                   </button>
                 </div>
               </div>

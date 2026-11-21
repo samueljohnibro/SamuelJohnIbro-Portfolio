@@ -1,11 +1,126 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  formatRemainingSeconds,
   formatReviewDate,
+  getMyReviewSessions,
   getReviewerInitials,
 } from '../data/reviewsMeta.js'
 import { useMasonryGrid } from '../hooks/useMasonryGrid.js'
-import { ProfileTagLink } from './ProfilePlatformBadge.jsx'
+import { PlatformIcon } from './ProfilePlatformBadge.jsx'
 import { StarDisplay } from './StarRating.jsx'
+
+function ReviewAuthorAvatar({
+  review,
+  isPopoverOpen,
+  onOpenPopover,
+  onClosePopover,
+  onTogglePopover,
+}) {
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState('')
+  const profiles = Array.isArray(review.profiles) ? review.profiles : []
+  const hasProfiles = profiles.length > 0
+  const showImage = Boolean(
+    review.avatarUrl && failedAvatarUrl !== review.avatarUrl
+  )
+  const initials = getReviewerInitials(review.reviewerName)
+
+  const avatarVisual = showImage ? (
+    <img
+      src={review.avatarUrl}
+      alt={review.reviewerName}
+      className="review-author-avatar-img"
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailedAvatarUrl(review.avatarUrl)}
+    />
+  ) : (
+    <span className="review-author-avatar-initials" aria-hidden="true">
+      {initials}
+    </span>
+  )
+
+  if (!hasProfiles) {
+    return (
+      <div className="review-author-avatar" aria-hidden="true">
+        {avatarVisual}
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className={`review-avatar-popover-wrap${isPopoverOpen ? ' is-open' : ''}`}
+      onMouseEnter={onOpenPopover}
+      onMouseLeave={onClosePopover}
+    >
+      <button
+        type="button"
+        className="review-author-avatar review-author-avatar-interactive"
+        onClick={(e) => {
+          e.stopPropagation()
+          onTogglePopover()
+        }}
+        onFocus={onOpenPopover}
+        aria-expanded={isPopoverOpen}
+        aria-haspopup="true"
+        aria-label={`View ${review.reviewerName}'s tagged ${profiles.length === 1 ? 'profile' : 'profiles'}`}
+        title={`Hover or tap to view ${review.reviewerName}'s tagged ${profiles.length === 1 ? 'profile' : 'profiles'}`}
+      >
+        {avatarVisual}
+        <span className="review-avatar-link-badge" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none">
+            <path
+              d="M6.7 9.3L9.3 6.7M5.5 7.5L4.4 8.6C3.5 9.5 3.5 10.9 4.4 11.8C5.3 12.7 6.7 12.7 7.6 11.8L8.7 10.7M10.5 8.5L11.6 7.4C12.5 6.5 12.5 5.1 11.6 4.2C10.7 3.3 9.3 3.3 8.4 4.2L7.3 5.3"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        </span>
+      </button>
+
+      <div
+        className="review-avatar-popover"
+        role="region"
+        aria-label={`${review.reviewerName}'s tagged profiles`}
+      >
+        <div className="review-popover-head">
+          <span className="review-popover-title">
+            Tagged {profiles.length === 1 ? 'Profile' : 'Profiles'}
+          </span>
+          <span className="review-popover-sub">{review.reviewerName}</span>
+        </div>
+
+        <div className="review-popover-links">
+          {profiles.map((profile, idx) => (
+            <a
+              key={`${review.id}-pop-${idx}`}
+              href={profile.url}
+              target="_blank"
+              rel="noopener noreferrer nofollow ugc"
+              className={`review-popover-link platform-${profile.platform || 'website'}`}
+              title={profile.url}
+            >
+              <PlatformIcon platform={profile.platform} />
+              <span className="review-popover-link-meta">
+                <strong className="review-popover-platform">
+                  {profile.label || 'Profile'}
+                </strong>
+                <span className="review-popover-handle">
+                  {profile.handle || profile.display || profile.url}
+                </span>
+              </span>
+              <span className="review-popover-arrow" aria-hidden="true">
+                ↗
+              </span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export function ReviewsSection({
   sectionConfig,
@@ -15,11 +130,87 @@ export function ReviewsSection({
   activeFilter = 'all',
   onChangeFilter,
   onOpenWriteReview,
+  onEditReview,
+  onDeleteReview,
+  deletingReviewId = null,
+  actionFeedback = null,
+  onDismissFeedback,
   loading = false,
 }) {
   const [sortBy, setSortBy] = useState('featured')
   const [ratingFilter, setRatingFilter] = useState(null)
+  const [openPopoverId, setOpenPopoverId] = useState(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [clientNow, setClientNow] = useState(null)
   const gridRef = useRef(null)
+
+  // Sync client clock asynchronously after hydration so SSR and initial render always match
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setClientNow(Date.now())
+    }, 0)
+    return () => window.clearTimeout(id)
+  }, [reviews])
+
+  const manageableById = useMemo(() => {
+    if (clientNow === null) return {}
+    const localSessions = getMyReviewSessions()
+    const map = {}
+
+    for (const review of reviews) {
+      if (!review?.id) continue
+      const local = localSessions[review.id]
+      const localExpiresMs = local?.expiresAt ? Date.parse(local.expiresAt) : 0
+      const serverExpiresMs =
+        review.canManage && review.editExpiresAt
+          ? Date.parse(review.editExpiresAt)
+          : 0
+      const bestExpiresMs = Math.max(
+        Number.isFinite(localExpiresMs) ? localExpiresMs : 0,
+        Number.isFinite(serverExpiresMs) ? serverExpiresMs : 0
+      )
+      const remainingSec = Math.ceil((bestExpiresMs - clientNow) / 1000)
+      if (remainingSec > 0) {
+        map[review.id] = {
+          editToken: local?.editToken || '',
+          expiresMs: bestExpiresMs,
+          remainingSec,
+        }
+      }
+    }
+    return map
+  }, [reviews, clientNow])
+
+  const hasActiveEditWindow = Object.keys(manageableById).length > 0
+
+  useEffect(() => {
+    if (!hasActiveEditWindow) return undefined
+    const timer = window.setInterval(() => {
+      setClientNow(Date.now())
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [hasActiveEditWindow])
+
+  // Close touch/click-opened popover on outside click or Escape
+  useEffect(() => {
+    if (!openPopoverId) return undefined
+    const handleOutsideClick = (event) => {
+      if (!event.target.closest('.review-avatar-popover-wrap')) {
+        setOpenPopoverId(null)
+      }
+    }
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setOpenPopoverId(null)
+      }
+    }
+    document.addEventListener('click', handleOutsideClick)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('click', handleOutsideClick)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [openPopoverId])
 
   const totalCount = Number(summary?.totalCount || 0)
   const averageRating = Number(summary?.averageRating || 0)
@@ -164,8 +355,8 @@ export function ReviewsSection({
             <span>★ Write a Review</span>
           </button>
           <p className="reviews-cta-hint">
-            No login required. Rate Samuel or a specific project and tag your real
-            LinkedIn, GitHub, X, or personal site.
+            No login required. Attach a photo or tag your real profiles — hover
+            any reviewer&apos;s picture to view their tagged pages.
           </p>
         </div>
       </div>
@@ -252,6 +443,25 @@ export function ReviewsSection({
         </div>
       </div>
 
+      {actionFeedback?.text && (
+        <div
+          className={`reviews-action-feedback${actionFeedback.type === 'error' ? ' is-error' : ' is-success'}`}
+          role={actionFeedback.type === 'error' ? 'alert' : 'status'}
+        >
+          <span>{actionFeedback.text}</span>
+          {onDismissFeedback && (
+            <button
+              type="button"
+              className="reviews-action-feedback-close"
+              onClick={onDismissFeedback}
+              aria-label="Dismiss message"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="reviews-empty-card">
           <p className="reviews-empty-title">Loading reviews...</p>
@@ -306,11 +516,15 @@ export function ReviewsSection({
               .split(/\n{2,}/)
               .map((p) => p.trim())
               .filter(Boolean)
+            const manageInfo = manageableById[review.id] || null
+            const isPopoverOpen = openPopoverId === review.id
+            const isConfirmingDelete = confirmDeleteId === review.id
+            const isDeleting = deletingReviewId === review.id
 
             return (
               <article
                 key={review.id}
-                className={`review-card${review.featured ? ' is-featured' : ''}`}
+                className={`review-card${review.featured ? ' is-featured' : ''}${isPopoverOpen ? ' is-popover-open' : ''}`}
               >
                 <div className="review-card-top">
                   <div className="review-card-badges">
@@ -356,9 +570,21 @@ export function ReviewsSection({
 
                 <div className="review-card-author-block">
                   <div className="review-author-row">
-                    <div className="review-author-avatar" aria-hidden="true">
-                      {getReviewerInitials(review.reviewerName)}
-                    </div>
+                    <ReviewAuthorAvatar
+                      review={review}
+                      isPopoverOpen={isPopoverOpen}
+                      onOpenPopover={() => setOpenPopoverId(review.id)}
+                      onClosePopover={() =>
+                        setOpenPopoverId((prev) =>
+                          prev === review.id ? null : prev
+                        )
+                      }
+                      onTogglePopover={() =>
+                        setOpenPopoverId((prev) =>
+                          prev === review.id ? null : review.id
+                        )
+                      }
+                    />
 
                     <div className="review-author-meta">
                       <div className="review-author-name-line">
@@ -377,24 +603,74 @@ export function ReviewsSection({
                     </div>
                   </div>
 
-                  {Array.isArray(review.profiles) &&
-                    review.profiles.length > 0 && (
-                      <div className="review-profiles-block">
-                        <span className="review-profiles-caption">
-                          Tagged real{' '}
-                          {review.profiles.length === 1 ? 'page' : 'pages'}
+                  {manageInfo && (
+                    <div className="review-client-manage-bar">
+                      <span className="review-countdown-pill">
+                        <span className="countdown-pulse" aria-hidden="true" />
+                        <span>
+                          Editable for{' '}
+                          <strong>
+                            {formatRemainingSeconds(manageInfo.remainingSec)}
+                          </strong>
                         </span>
-                        <div className="review-profile-links">
-                          {review.profiles.map((profile, idx) => (
-                            <ProfileTagLink
-                              key={`${review.id}-prof-${idx}`}
-                              profile={profile}
-                              reviewerName={review.reviewerName}
-                            />
-                          ))}
+                      </span>
+
+                      {isConfirmingDelete ? (
+                        <div className="review-delete-confirm">
+                          <span className="review-delete-confirm-label">
+                            Delete?
+                          </span>
+                          <button
+                            type="button"
+                            className="review-client-btn review-btn-delete-confirm"
+                            disabled={isDeleting}
+                            onClick={async () => {
+                              await onDeleteReview?.(
+                                review,
+                                manageInfo.editToken
+                              )
+                              setConfirmDeleteId(null)
+                            }}
+                          >
+                            {isDeleting ? 'Deleting...' : 'Yes, Delete'}
+                          </button>
+                          <button
+                            type="button"
+                            className="review-client-btn review-btn-cancel"
+                            disabled={isDeleting}
+                            onClick={() => setConfirmDeleteId(null)}
+                          >
+                            Cancel
+                          </button>
                         </div>
-                      </div>
-                    )}
+                      ) : (
+                        <div className="review-client-btns">
+                          <button
+                            type="button"
+                            className="review-client-btn review-btn-edit"
+                            onClick={(e) =>
+                              onEditReview?.(
+                                review,
+                                manageInfo.editToken,
+                                e.currentTarget
+                              )
+                            }
+                            disabled={isDeleting}
+                          >
+                            ✎ Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="review-client-btn review-btn-delete"
+                            onClick={() => setConfirmDeleteId(review.id)}
+                            disabled={isDeleting}
+                          >
+                            🗑 Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {review.ownerReply && (

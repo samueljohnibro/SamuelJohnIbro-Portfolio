@@ -15,7 +15,11 @@ import {
   MAX_REVIEWER_ROLE_LENGTH,
   MAX_REVIEW_COMMENT_LENGTH,
   MIN_REVIEW_COMMENT_LENGTH,
+  REVIEW_EDIT_WINDOW_MS,
+  cleanPathSegments,
   computeReviewsSummary,
+  isDisallowedHostname,
+  isPlaceholderOrMissingAvatar,
   normalizeProfileLinks,
 } from '../src/data/reviewsMeta.js'
 import {
@@ -36,7 +40,7 @@ const LOGIN_LOCKOUT_MS = 15 * 60 * 1000
 const MAX_MEDIA_CHUNK_BYTES = 256 * 1024 // 256 KB per D1 BLOB chunk
 const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024 // 25 MB max per uploaded file
 const MAX_PORTFOLIO_JSON_BYTES = 512 * 1024 // 512 KB sanity cap
-const MAX_REVIEW_BODY_BYTES = 16 * 1024 // 16 KB sanity cap
+const MAX_REVIEW_BODY_BYTES = 320 * 1024 // 320 KB sanity cap (supports optional compressed avatar photo)
 const REVIEW_MIN_FILL_MS = 2000 // Reject automated sub-2s form blasts
 const REVIEW_CHALLENGE_TTL_MS = 6 * 60 * 60 * 1000 // 6 hours
 const REVIEW_COOLDOWN_MS = 45 * 1000 // 45s between reviews per IP
@@ -120,14 +124,34 @@ function constantTimeEqual(aBytes, bBytes) {
   return diff === 0
 }
 
-async function sha256Hex(text) {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(text)
-  )
+function constantTimeStringEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) {
+    return false
+  }
+  const encoder = new TextEncoder()
+  return constantTimeEqual(encoder.encode(a), encoder.encode(b))
+}
+
+function bytesToBase64(bytes) {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < arr.length; i += chunk) {
+    binary += String.fromCharCode(...arr.subarray(i, i + chunk))
+  }
+  return btoa(binary)
+}
+
+async function sha256BytesHex(bytes) {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const digest = await crypto.subtle.digest('SHA-256', arr)
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
+}
+
+async function sha256Hex(text) {
+  return sha256BytesHex(new TextEncoder().encode(text))
 }
 
 async function verifyPassword(password, storedHash) {
@@ -250,6 +274,8 @@ async function ensureDatabaseReady(db) {
         relationship TEXT NOT NULL DEFAULT '',
         comment TEXT NOT NULL,
         profiles_json TEXT NOT NULL DEFAULT '[]',
+        avatar_url TEXT NOT NULL DEFAULT '',
+        edit_token_hash TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'approved',
         verified INTEGER NOT NULL DEFAULT 0,
         verified_label TEXT NOT NULL DEFAULT '',
@@ -282,6 +308,26 @@ async function ensureDatabaseReady(db) {
       'CREATE INDEX IF NOT EXISTS idx_reviews_nonce ON reviews (challenge_nonce)'
     )
     .run()
+
+  try {
+    await db
+      .prepare(
+        "ALTER TABLE reviews ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''"
+      )
+      .run()
+  } catch {
+    // Column already exists
+  }
+
+  try {
+    await db
+      .prepare(
+        "ALTER TABLE reviews ADD COLUMN edit_token_hash TEXT NOT NULL DEFAULT ''"
+      )
+      .run()
+  } catch {
+    // Column already exists
+  }
 
   await db
     .prepare(
@@ -582,7 +628,57 @@ function parseJsonArraySafe(raw) {
   }
 }
 
-function serializePublicReview(row) {
+const AVATAR_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+const ALLOWED_AVATAR_MIME_RE = /^image\/(jpeg|jpg|png|webp|gif|avif)\b/i
+const GITHUB_RESERVED_PATHS = new Set([
+  'about',
+  'account',
+  'collections',
+  'contact',
+  'customer-stories',
+  'enterprise',
+  'events',
+  'explore',
+  'features',
+  'gist',
+  'issues',
+  'join',
+  'login',
+  'logout',
+  'marketplace',
+  'new',
+  'notifications',
+  'organizations',
+  'orgs',
+  'pricing',
+  'pulls',
+  'readme',
+  'search',
+  'security',
+  'settings',
+  'signup',
+  'site',
+  'sponsors',
+  'team',
+  'topics',
+  'trending',
+])
+
+function serializePublicReview(row, options = {}) {
+  const viewerIpHash = options?.viewerIpHash || ''
+  const createdMs = Date.parse(row.created_at)
+  const editExpiresAtMs = Number.isFinite(createdMs)
+    ? createdMs + REVIEW_EDIT_WINDOW_MS
+    : 0
+  const withinWindow = editExpiresAtMs > Date.now()
+  const canManage = Boolean(
+    withinWindow &&
+      viewerIpHash &&
+      row.ip_hash &&
+      constantTimeStringEqual(row.ip_hash, viewerIpHash)
+  )
+
   return {
     id: row.id,
     targetType: row.target_type,
@@ -594,13 +690,303 @@ function serializePublicReview(row) {
     relationship: row.relationship || '',
     comment: row.comment,
     profiles: parseJsonArraySafe(row.profiles_json),
+    avatarUrl: row.avatar_url || '',
     verified: Boolean(row.verified),
     verifiedLabel: row.verified_label || (row.verified ? 'Verified Collaborator' : ''),
     featured: Boolean(row.featured),
     ownerReply: row.owner_reply || '',
     ownerReplyAt: row.owner_reply_at || '',
     createdAt: row.created_at,
+    canManage,
+    editExpiresAt: canManage ? new Date(editExpiresAtMs).toISOString() : '',
   }
+}
+
+async function readHtmlHeadChunk(response, maxBytes = 96 * 1024) {
+  const reader = response.body?.getReader()
+  if (!reader) {
+    const full = await response.text()
+    return full.slice(0, maxBytes)
+  }
+  const decoder = new TextDecoder()
+  let accumulated = ''
+  let totalBytes = 0
+  try {
+    while (totalBytes < maxBytes) {
+      const { value, done } = await reader.read()
+      if (done) break
+      if (value) {
+        totalBytes += value.byteLength
+        accumulated += decoder.decode(value, { stream: true })
+        if (accumulated.toLowerCase().includes('</head>')) {
+          break
+        }
+      }
+    }
+  } finally {
+    try {
+      await reader.cancel()
+    } catch {
+      // ignore cancel errors
+    }
+  }
+  return accumulated
+}
+
+async function fetchVerifiedImage(imageUrl, platform = '', { inlineIfSmall = false, maxInlineBytes = 160 * 1024 } = {}) {
+  // Generic pre-fetch check (platform-specific host check runs on finalUrl AFTER redirects)
+  if (!imageUrl || isPlaceholderOrMissingAvatar(imageUrl)) return null
+  let parsed
+  try {
+    parsed = new URL(imageUrl)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+  if (isDisallowedHostname(parsed.hostname)) return null
+
+  try {
+    const res = await fetch(parsed.toString(), {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        'User-Agent': AVATAR_USER_AGENT,
+        Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8',
+      },
+      signal: AbortSignal.timeout(3500),
+    })
+    if (!res.ok) return null
+    const finalUrl = res.url || parsed.toString()
+    if (isPlaceholderOrMissingAvatar(finalUrl, platform)) return null
+
+    const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+    if (!ALLOWED_AVATAR_MIME_RE.test(contentType)) return null
+
+    const contentLengthHeader = Number(res.headers.get('content-length') || 0)
+    // If we don't need to inline and the image is large (> 256 KB), accept the verified URL without buffering megabytes
+    if (!inlineIfSmall && contentLengthHeader > 256 * 1024) {
+      try {
+        await res.body?.cancel()
+      } catch {
+        // ignore
+      }
+      return { url: finalUrl, bytes: null, contentType }
+    }
+
+    const buf = new Uint8Array(await res.arrayBuffer())
+    if (buf.byteLength < 300) return null
+
+    if (inlineIfSmall && buf.byteLength <= maxInlineBytes) {
+      return {
+        url: `data:${contentType};base64,${bytesToBase64(buf)}`,
+        bytes: buf,
+        contentType,
+      }
+    }
+    return { url: finalUrl, bytes: buf, contentType }
+  } catch {
+    return null
+  }
+}
+
+function extractMetaImageCandidates(html, baseOrigin) {
+  const candidates = []
+  const patterns = [
+    /<meta\s+[^>]*property=["']og:image:secure_url["'][^>]*content=["']([^"']+)["']/i,
+    /<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:image:secure_url["']/i,
+    /<meta\s+[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i,
+    /<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i,
+    /<meta\s+[^>]*name=["']twitter:image(?::src)?["'][^>]*content=["']([^"']+)["']/i,
+    /<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:image(?::src)?["']/i,
+    /<meta\s+[^>]*property=["']twitter:image(?::src)?["'][^>]*content=["']([^"']+)["']/i,
+    /<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']twitter:image(?::src)?["']/i,
+  ]
+
+  const seen = new Set()
+  for (const regex of patterns) {
+    const match = html.match(regex)
+    if (!match?.[1]) continue
+    let raw = match[1].replace(/&amp;/g, '&').trim()
+    if (!raw) continue
+    try {
+      if (raw.startsWith('//')) {
+        raw = `https:${raw}`
+      } else if (raw.startsWith('/')) {
+        raw = new URL(raw, baseOrigin).toString()
+      }
+      if (!seen.has(raw)) {
+        seen.add(raw)
+        candidates.push(raw)
+      }
+    } catch {
+      // ignore malformed URL
+    }
+  }
+  return candidates
+}
+
+async function resolveGitHubAvatar(username) {
+  const cleanUser = String(username || '').replace(/^@/, '').trim()
+  if (!cleanUser || GITHUB_RESERVED_PATHS.has(cleanUser.toLowerCase())) return ''
+  try {
+    // Fetch user avatar and their generated identicon in parallel to detect accounts with no custom profile photo
+    const avatarUrl = `https://github.com/${encodeURIComponent(cleanUser)}.png`
+    const identiconUrl = `https://github.com/identicons/${encodeURIComponent(cleanUser)}.png`
+    const [avatarInfo, identiconRes] = await Promise.all([
+      fetchVerifiedImage(avatarUrl, 'github', { inlineIfSmall: false }),
+      fetch(identiconUrl, {
+        redirect: 'follow',
+        headers: { 'User-Agent': AVATAR_USER_AGENT },
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => null),
+    ])
+
+    if (!avatarInfo?.url) return ''
+
+    if (avatarInfo.bytes && identiconRes?.ok) {
+      const identBytes = new Uint8Array(await identiconRes.arrayBuffer())
+      if (identBytes.byteLength === avatarInfo.bytes.byteLength) {
+        const [avatarHash, identHash] = await Promise.all([
+          sha256BytesHex(avatarInfo.bytes),
+          sha256BytesHex(identBytes),
+        ])
+        if (avatarHash === identHash) {
+          // Account has no uploaded profile photo — only GitHub's default identicon
+          return ''
+        }
+      }
+    }
+
+    // Request a crisp, lightweight 200px size variant from GitHub's avatar CDN
+    try {
+      const u = new URL(avatarInfo.url)
+      u.searchParams.set('s', '200')
+      return u.toString()
+    } catch {
+      return avatarInfo.url
+    }
+  } catch {
+    return ''
+  }
+}
+
+async function resolveXAvatar(handle) {
+  const cleanHandle = String(handle || '').replace(/^@/, '').trim()
+  if (!cleanHandle) return ''
+  try {
+    const res = await fetch(
+      `https://api.fxtwitter.com/${encodeURIComponent(cleanHandle)}`,
+      {
+        headers: {
+          'User-Agent': AVATAR_USER_AGENT,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(3000),
+      }
+    )
+    if (!res.ok) return ''
+    const data = await res.json().catch(() => null)
+    let candidate = data?.user?.avatar_url || ''
+    if (!candidate || isPlaceholderOrMissingAvatar(candidate, 'x')) return ''
+    candidate = candidate.replace(/_normal(\.[a-z]+)$/i, '_200x200$1')
+    const verified = await fetchVerifiedImage(candidate, 'x', { inlineIfSmall: false })
+    return verified?.url || ''
+  } catch {
+    return ''
+  }
+}
+
+async function resolveAvatarFromProfileUrl(profileUrl, explicitPlatform = '') {
+  if (!profileUrl || typeof profileUrl !== 'string') return ''
+  try {
+    const parsed = new URL(profileUrl)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return ''
+    if (isDisallowedHostname(parsed.hostname)) return ''
+
+    const cleanHost = parsed.hostname.replace(/^www\./i, '').toLowerCase()
+    const segments = cleanPathSegments(parsed.pathname)
+
+    const platform =
+      explicitPlatform ||
+      (cleanHost === 'github.com' || cleanHost.endsWith('.github.com')
+        ? 'github'
+        : cleanHost === 'linkedin.com' || cleanHost.endsWith('.linkedin.com')
+          ? 'linkedin'
+          : cleanHost === 'x.com' ||
+              cleanHost === 'twitter.com' ||
+              cleanHost.endsWith('.twitter.com')
+            ? 'x'
+            : cleanHost === 'instagram.com' || cleanHost.endsWith('.instagram.com')
+              ? 'instagram'
+              : 'website')
+
+    if (platform === 'github') {
+      if (!segments[0]) return ''
+      return await resolveGitHubAvatar(segments[0])
+    }
+
+    if (platform === 'x') {
+      if (!segments[0]) return ''
+      return await resolveXAvatar(segments[0])
+    }
+
+    // LinkedIn, Instagram, YouTube, portfolio & personal websites: inspect HTML metadata
+    const pageRes = await fetch(parsed.toString(), {
+      headers: {
+        'User-Agent': AVATAR_USER_AGENT,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(3500),
+    })
+    if (!pageRes.ok) return ''
+
+    const htmlChunk = await readHtmlHeadChunk(pageRes, 96 * 1024)
+    const candidates = extractMetaImageCandidates(htmlChunk, parsed.origin)
+    // Inline LinkedIn / Instagram avatars as data URLs so signed CDN URLs never expire or get CORP-blocked
+    const inlineExpiringCdn = platform === 'linkedin' || platform === 'instagram'
+
+    for (const candidate of candidates) {
+      if (isPlaceholderOrMissingAvatar(candidate, platform)) continue
+      const verified = await fetchVerifiedImage(candidate, platform, {
+        inlineIfSmall: inlineExpiringCdn,
+      })
+      if (verified?.url) {
+        return verified.url
+      }
+    }
+  } catch {
+    // Graceful network/timeout fallback
+  }
+  return ''
+}
+
+async function resolveReviewerAvatar(uploadedPhoto, profiles = []) {
+  if (typeof uploadedPhoto === 'string') {
+    const trimmed = uploadedPhoto.trim()
+    if (
+      /^data:image\/(jpeg|jpg|png|webp|gif|avif);base64,/i.test(trimmed) &&
+      trimmed.length <= 240 * 1024
+    ) {
+      return trimmed
+    }
+  }
+
+  // Walk through all tagged profiles; skip any profile with no real photo so even if only the last has one, it gets used
+  if (Array.isArray(profiles) && profiles.length > 0) {
+    for (const entry of profiles) {
+      const url = typeof entry === 'string' ? entry : entry?.url
+      const platform = typeof entry === 'object' ? entry?.platform || '' : ''
+      if (!url) continue
+      const resolved = await resolveAvatarFromProfileUrl(url, platform)
+      if (resolved && !isPlaceholderOrMissingAvatar(resolved, platform)) {
+        return resolved
+      }
+    }
+  }
+
+  return ''
 }
 
 function serializeAdminReview(row) {
@@ -685,7 +1071,7 @@ async function saveReviewsSettings(env, nextSettings) {
   return normalized
 }
 
-async function readApprovedReviewsAndSummary(db) {
+async function readApprovedReviewsAndSummary(db, viewerIpHash = '') {
   if (!db) {
     return {
       reviews: [],
@@ -697,15 +1083,17 @@ async function readApprovedReviewsAndSummary(db) {
     .prepare(
       `SELECT id, target_type, target_id, target_title, rating,
               reviewer_name, reviewer_role, relationship, comment,
-              profiles_json, verified, verified_label, featured,
-              owner_reply, owner_reply_at, created_at
+              profiles_json, avatar_url, verified, verified_label, featured,
+              owner_reply, owner_reply_at, ip_hash, created_at
        FROM reviews
        WHERE status = 'approved'
        ORDER BY featured DESC, created_at DESC
        LIMIT 200`
     )
     .all()
-  const reviews = (results || []).map(serializePublicReview)
+  const reviews = (results || []).map((row) =>
+    serializePublicReview(row, { viewerIpHash })
+  )
   return {
     reviews,
     summary: computeReviewsSummary(reviews),
@@ -1775,12 +2163,13 @@ async function handleApi(request, env, url) {
     }
 
     await ensureDatabaseReady(env.DB)
-    const [reviewPayload, settings, secret] = await Promise.all([
-      readApprovedReviewsAndSummary(env.DB),
+    const secret = await getSessionSecret(env)
+    const viewerIpHash = await getClientIpHash(request, secret)
+    const [reviewPayload, settings, challengeToken] = await Promise.all([
+      readApprovedReviewsAndSummary(env.DB, viewerIpHash),
       getReviewsSettings(env),
-      getSessionSecret(env),
+      issueReviewChallenge(secret),
     ])
-    const challengeToken = await issueReviewChallenge(secret)
 
     return jsonResponse({
       reviews: reviewPayload.reviews,
@@ -2045,14 +2434,18 @@ async function handleApi(request, env, url) {
     }
 
     const reviewId = crypto.randomUUID().replace(/-/g, '')
+    const editToken = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '')
+    const editTokenHash = await sha256Hex(editToken)
+    const avatarUrl = await resolveReviewerAvatar(body?.photo, profiles)
+
     await env.DB.prepare(
       `INSERT INTO reviews (
         id, target_type, target_id, target_title, rating,
         reviewer_name, reviewer_role, relationship, comment,
-        profiles_json, status, verified, verified_label, featured,
+        profiles_json, avatar_url, edit_token_hash, status, verified, verified_label, featured,
         owner_reply, owner_reply_at, invite_id, challenge_nonce,
         ip_hash, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?, ?, ?, ?, ?)`
     )
       .bind(
         reviewId,
@@ -2065,6 +2458,8 @@ async function handleApi(request, env, url) {
         relationship,
         comment,
         JSON.stringify(profiles),
+        avatarUrl,
+        editTokenHash,
         status,
         verified,
         verifiedLabel,
@@ -2081,23 +2476,31 @@ async function handleApi(request, env, url) {
     const insertedRow = await env.DB.prepare(
       `SELECT id, target_type, target_id, target_title, rating,
               reviewer_name, reviewer_role, relationship, comment,
-              profiles_json, verified, verified_label, featured,
-              owner_reply, owner_reply_at, created_at
+              profiles_json, avatar_url, verified, verified_label, featured,
+              owner_reply, owner_reply_at, ip_hash, created_at
        FROM reviews WHERE id = ?`
     )
       .bind(reviewId)
       .first()
 
     const [updatedFeed, freshChallenge] = await Promise.all([
-      readApprovedReviewsAndSummary(env.DB),
+      readApprovedReviewsAndSummary(env.DB, ipHash),
       issueReviewChallenge(secret),
     ])
+
+    const editExpiresAt = new Date(
+      Date.parse(nowIso) + REVIEW_EDIT_WINDOW_MS
+    ).toISOString()
 
     return jsonResponse(
       {
         ok: true,
         status,
-        review: insertedRow ? serializePublicReview(insertedRow) : null,
+        review: insertedRow
+          ? serializePublicReview(insertedRow, { viewerIpHash: ipHash })
+          : null,
+        editToken,
+        editExpiresAt,
         reviews: updatedFeed.reviews,
         summary: updatedFeed.summary,
         challengeToken: freshChallenge,
@@ -2108,6 +2511,264 @@ async function handleApi(request, env, url) {
       },
       201
     )
+  }
+
+  const clientReviewMatch = path.match(/^\/api\/reviews\/([a-zA-Z0-9-]+)$/)
+  if (clientReviewMatch && clientReviewMatch[1] !== 'invite' && request.method === 'PATCH') {
+    if (!assertSameOrigin(request)) {
+      return jsonResponse({ error: 'Invalid request origin.' }, 403)
+    }
+    if (!env.DB) {
+      return jsonResponse({ error: 'Reviews database is temporarily unavailable.' }, 503)
+    }
+    await ensureDatabaseReady(env.DB)
+
+    const reviewId = clientReviewMatch[1]
+    const existingRow = await env.DB.prepare('SELECT * FROM reviews WHERE id = ?')
+      .bind(reviewId)
+      .first()
+    if (!existingRow) {
+      return jsonResponse({ error: 'Review not found.' }, 404)
+    }
+
+    const createdAtMs = Date.parse(existingRow.created_at)
+    const elapsedMs = Date.now() - createdAtMs
+    if (!Number.isFinite(createdAtMs) || elapsedMs > REVIEW_EDIT_WINDOW_MS) {
+      return jsonResponse(
+        {
+          error:
+            'The 5-minute edit window has expired. Only the site admin can edit or remove this review now.',
+        },
+        403
+      )
+    }
+
+    const rawText = await request.text()
+    if (rawText.length > MAX_REVIEW_BODY_BYTES) {
+      return jsonResponse({ error: 'Review payload is too large.' }, 413)
+    }
+
+    let body
+    try {
+      body = JSON.parse(rawText)
+    } catch {
+      return jsonResponse({ error: 'Invalid JSON request payload.' }, 400)
+    }
+
+    const secret = await getSessionSecret(env)
+    const viewerIpHash = await getClientIpHash(request, secret)
+    const editToken = String(body?.editToken || '').trim()
+    let authorized = false
+    if (editToken && existingRow.edit_token_hash) {
+      const tokenHash = await sha256Hex(editToken)
+      if (constantTimeStringEqual(tokenHash, existingRow.edit_token_hash)) {
+        authorized = true
+      }
+    }
+    if (!authorized && viewerIpHash && existingRow.ip_hash) {
+      if (constantTimeStringEqual(viewerIpHash, existingRow.ip_hash)) {
+        authorized = true
+      }
+    }
+    if (!authorized) {
+      return jsonResponse(
+        {
+          error:
+            'Only the browser or IP address that submitted this review can edit it during the 5-minute window.',
+        },
+        403
+      )
+    }
+
+    const rating = Number(body?.rating)
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return jsonResponse({ error: 'Please choose a 1 to 5 star rating.' }, 400)
+    }
+
+    const reviewerName = cleanSingleLine(body?.reviewerName, MAX_REVIEWER_NAME_LENGTH)
+    if (reviewerName.length < 2) {
+      return jsonResponse(
+        { error: 'Please enter your name (at least 2 characters).' },
+        400
+      )
+    }
+
+    const reviewerRole = cleanSingleLine(body?.reviewerRole, MAX_REVIEWER_ROLE_LENGTH)
+    const relationship = cleanSingleLine(body?.relationship, MAX_RELATIONSHIP_LENGTH)
+    const comment = cleanMultiline(body?.comment, MAX_REVIEW_COMMENT_LENGTH)
+    if (comment.length < MIN_REVIEW_COMMENT_LENGTH) {
+      return jsonResponse(
+        {
+          error: `Please write at least ${MIN_REVIEW_COMMENT_LENGTH} characters in your review.`,
+        },
+        400
+      )
+    }
+
+    const rawProfiles = Array.isArray(body?.profiles) ? body.profiles : []
+    const nonEmptyProfileInputs = rawProfiles.filter((entry) => {
+      const u = typeof entry === 'string' ? entry : entry?.url
+      return typeof u === 'string' && u.trim().length > 0
+    })
+    if (nonEmptyProfileInputs.length > MAX_PROFILES_PER_REVIEW) {
+      return jsonResponse(
+        { error: `You can attach up to ${MAX_PROFILES_PER_REVIEW} profile pages.` },
+        400
+      )
+    }
+
+    const { profiles, invalidUrls } = normalizeProfileLinks(rawProfiles)
+    if (invalidUrls.length > 0) {
+      return jsonResponse(
+        {
+          error:
+            'One or more profile URLs look invalid. Use real public URLs like https://linkedin.com/in/username or https://github.com/username.',
+        },
+        400
+      )
+    }
+
+    const nextProfilesJson = JSON.stringify(profiles)
+    const profilesChanged = nextProfilesJson !== (existingRow.profiles_json || '[]')
+    let nextAvatarUrl = existingRow.avatar_url || ''
+    if (
+      typeof body?.photo === 'string' &&
+      /^data:image\/(jpeg|jpg|png|webp|gif|avif);base64,/i.test(body.photo.trim())
+    ) {
+      nextAvatarUrl = await resolveReviewerAvatar(body.photo, profiles)
+    } else if (body?.removePhoto === true) {
+      nextAvatarUrl =
+        profiles.length > 0 ? await resolveReviewerAvatar('', profiles) : ''
+    } else if (profilesChanged || (!nextAvatarUrl && profiles.length > 0)) {
+      if (!nextAvatarUrl || !nextAvatarUrl.startsWith('data:image/')) {
+        nextAvatarUrl =
+          profiles.length > 0 ? await resolveReviewerAvatar('', profiles) : ''
+      }
+    }
+
+    const nowIso = new Date().toISOString()
+    await env.DB.prepare(
+      `UPDATE reviews
+       SET rating = ?,
+           reviewer_name = ?,
+           reviewer_role = ?,
+           relationship = ?,
+           comment = ?,
+           profiles_json = ?,
+           avatar_url = ?,
+           updated_at = ?
+       WHERE id = ?`
+    )
+      .bind(
+        rating,
+        reviewerName,
+        reviewerRole,
+        relationship,
+        comment,
+        nextProfilesJson,
+        nextAvatarUrl,
+        nowIso,
+        reviewId
+      )
+      .run()
+
+    const updatedRow = await env.DB.prepare(
+      `SELECT id, target_type, target_id, target_title, rating,
+              reviewer_name, reviewer_role, relationship, comment,
+              profiles_json, avatar_url, verified, verified_label, featured,
+              owner_reply, owner_reply_at, ip_hash, created_at
+       FROM reviews WHERE id = ?`
+    )
+      .bind(reviewId)
+      .first()
+
+    const updatedFeed = await readApprovedReviewsAndSummary(env.DB, viewerIpHash)
+
+    return jsonResponse({
+      ok: true,
+      review: updatedRow
+        ? serializePublicReview(updatedRow, { viewerIpHash })
+        : null,
+      reviews: updatedFeed.reviews,
+      summary: updatedFeed.summary,
+      message: 'Your review was updated successfully.',
+    })
+  }
+
+  if (clientReviewMatch && clientReviewMatch[1] !== 'invite' && request.method === 'DELETE') {
+    if (!assertSameOrigin(request)) {
+      return jsonResponse({ error: 'Invalid request origin.' }, 403)
+    }
+    if (!env.DB) {
+      return jsonResponse({ error: 'Reviews database is temporarily unavailable.' }, 503)
+    }
+    await ensureDatabaseReady(env.DB)
+
+    const reviewId = clientReviewMatch[1]
+    const existingRow = await env.DB.prepare('SELECT * FROM reviews WHERE id = ?')
+      .bind(reviewId)
+      .first()
+    if (!existingRow) {
+      return jsonResponse({ error: 'Review not found.' }, 404)
+    }
+
+    const createdAtMs = Date.parse(existingRow.created_at)
+    const elapsedMs = Date.now() - createdAtMs
+    if (!Number.isFinite(createdAtMs) || elapsedMs > REVIEW_EDIT_WINDOW_MS) {
+      return jsonResponse(
+        {
+          error:
+            'The 5-minute deletion window has expired. Only the site admin can remove this review now.',
+        },
+        403
+      )
+    }
+
+    let body = {}
+    try {
+      body = await request.json()
+    } catch {
+      // Allow fallback if sent with empty body (e.g. IP-authorized deletion)
+    }
+
+    const secret = await getSessionSecret(env)
+    const viewerIpHash = await getClientIpHash(request, secret)
+    const editToken = String(body?.editToken || '').trim()
+    let authorized = false
+    if (editToken && existingRow.edit_token_hash) {
+      const tokenHash = await sha256Hex(editToken)
+      if (constantTimeStringEqual(tokenHash, existingRow.edit_token_hash)) {
+        authorized = true
+      }
+    }
+    if (!authorized && viewerIpHash && existingRow.ip_hash) {
+      if (constantTimeStringEqual(viewerIpHash, existingRow.ip_hash)) {
+        authorized = true
+      }
+    }
+    if (!authorized) {
+      return jsonResponse(
+        {
+          error:
+            'Only the browser or IP address that submitted this review can delete it during the 5-minute window.',
+        },
+        403
+      )
+    }
+
+    await env.DB.prepare('DELETE FROM reviews WHERE id = ?')
+      .bind(reviewId)
+      .run()
+
+    const updatedFeed = await readApprovedReviewsAndSummary(env.DB, viewerIpHash)
+
+    return jsonResponse({
+      ok: true,
+      deletedId: reviewId,
+      reviews: updatedFeed.reviews,
+      summary: updatedFeed.summary,
+      message: 'Your review was deleted successfully.',
+    })
   }
 
   if (path === '/api/admin/session' && request.method === 'GET') {
@@ -2476,7 +3137,7 @@ async function handleApi(request, env, url) {
       env.DB.prepare(
         `SELECT id, target_type, target_id, target_title, rating,
                 reviewer_name, reviewer_role, relationship, comment,
-                profiles_json, status, verified, verified_label, featured,
+                profiles_json, avatar_url, status, verified, verified_label, featured,
                 owner_reply, owner_reply_at, invite_id, created_at, updated_at
          FROM reviews
          ORDER BY created_at DESC`
@@ -2882,6 +3543,7 @@ async function renderPortfolioSsrResponse(request, env, url) {
           `<meta name="msvalidate.01" content="${escapeHtmlAttr(seoMeta.bingSiteVerification)}" />`,
         ]
       : []),
+    `<script id="sji-structured-data" type="application/ld+json">${serializeJsonForHtml(jsonLd)}</script>`,
     `<script>window.__PORTFOLIO_BOOTSTRAP__=${bootstrapPayload};</script>`,
   ].join('\n    ')
 
@@ -2917,6 +3579,11 @@ async function renderPortfolioSsrResponse(request, env, url) {
     .on('link[rel="canonical"]', {
       element(el) {
         el.setAttribute('href', seoMeta.canonicalUrl)
+      },
+    })
+    .on('meta[property="og:type"]', {
+      element(el) {
+        el.setAttribute('content', 'profile')
       },
     })
     .on('meta[property="og:url"]', {
@@ -3009,7 +3676,7 @@ async function renderPortfolioSsrResponse(request, env, url) {
     })
     .on('script#sji-structured-data', {
       element(el) {
-        el.setInnerContent(serializeJsonForHtml(jsonLd), { html: true })
+        el.remove()
       },
     })
     .on('head', {
